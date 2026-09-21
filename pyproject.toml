@@ -28,7 +28,7 @@ packages = ["src/dossier"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -m 'not network'"
 markers = [
     "network: test requires live network access to sec.gov (deselected by default)",
 ]
