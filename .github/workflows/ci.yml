@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # The primary dev machine is Windows and the tool ships to strangers on both, so
+    # both are first-class. A Windows-only path bug should fail here, not in an issue.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install the project
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      # Network tests are deselected by default, so nothing here touches sec.gov.
+      - name: Test
+        run: uv run pytest
+
+  # A single, stably-named check for branch protection to require.
+  #
+  # Requiring the matrix jobs directly means listing `test (ubuntu-latest, 3.11)` and
+  # its three siblings, and those names change whenever the matrix does. A required
+  # check that no longer exists is not enforced — it is silently skipped — so the
+  # protection rule would quietly become vacuous. This job has one job: be that name.
+  ci-green:
+    name: ci-green
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every matrix job succeeded
+        run: |
+          echo "test matrix result: ${{ needs.test.result }}"
+          test "${{ needs.test.result }}" = "success"

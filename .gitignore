@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Data never belongs in the repo checkout — it lives in the per-user data dir.
+*.sqlite
+*.sqlite3
+*.db
+data/
