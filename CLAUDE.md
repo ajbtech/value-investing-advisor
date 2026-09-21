@@ -73,6 +73,41 @@ the fabrication this design exists to prevent — one step downstream, where not
 checks it. Quote, cite the accession number, link the filing. The dossier JSON is the
 record; chat is a lens on it, never a replacement.
 
+## The model runs through Claude Code, not an API key
+
+The analysis passes are driven by a Claude Code session on an existing subscription.
+There is no API key in this project, which is the point: a key that does not exist
+cannot be published.
+
+- `dossier analyze --prepare` writes a pass's input — the prompt and the sections it
+  reads — as JSON. Claude produces the findings. `dossier analyze --load` validates
+  every quote against the source filing and stores what survives.
+- **The validator applies identically either way.** It never depended on where the text
+  came from. "It is only for me" is the usual reason to drop a check like this, and it
+  is not a reason: a tool that lies to one person is no better than one that lies to a
+  thousand.
+- `dossier.models` holds an API path — a provider interface, prices, a projected cost
+  and a conservative ceiling — for work that must run unattended, such as the quarterly
+  falsification re-check. It is not the default and needs no key until it is used.
+- Support for other providers is not built. It existed so strangers could bring their
+  own model, and there are no strangers.
+
+## This repository is public; the tool is personal
+
+The code is open. The audience is not. It is built for one person on their own machine,
+is not offered as a service, and carries no obligation to support anyone else.
+
+- **Nothing secret or personal is ever committed.** `tests/test_no_secrets.py` scans
+  every tracked file for credentials and for real email addresses, and verifies its own
+  patterns on each run — a guard that cannot fire reports all-clear, which is worse than
+  no guard at all.
+- Placeholder addresses use only the domains reserved for documentation
+  (`example.com`, `example.org`, `.invalid`, `.test`). Allowlisting invented domains one
+  at a time is how a check like that quietly stops working.
+- The EDGAR `User-Agent` must carry a real name and email, and the SEC sees it on every
+  request. It lives in an environment variable and must never reach a tracked file, a
+  README example, or a public issue.
+
 ## Component boundaries
 
 Each stage is a module with its own CLI entry point. Stages communicate *only* through the
@@ -153,4 +188,5 @@ by an LLM. Requests for alerts, watchlists, charts or real-time data pull this t
 trading bot the design exists to avoid.
 
 This is a research tool, not investment advice, and it makes no individualized
-recommendations.
+recommendations. Publishing the repository does not make it a product, and nothing here
+should be written as though it were.
