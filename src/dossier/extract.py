@@ -18,7 +18,14 @@ from __future__ import annotations
 
 import html as html_module
 import re
-from dataclasses import dataclass
+import sqlite3
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+
+#: Bumped when the extractor's behaviour changes. It is part of every extraction job's
+#: idempotency key, so a fixed parser re-extracts rather than serving the old bad parse
+#: from cache — the same reason prompt_version exists for the analysis passes.
+EXTRACTOR_VERSION = "1"
 
 #: Sections the analysis passes actually read.
 DEFAULT_ITEMS = ("1", "1A", "1B", "2", "7", "7A", "8")
@@ -170,3 +177,68 @@ def extract_sections(
             )
 
     return {item: section for item, section in sections.items() if section.text}
+
+
+@dataclass
+class ExtractResult:
+    accession_no: str
+    sections: int = 0
+    items: list[str] = field(default_factory=list)
+    lowest_confidence: float = 1.0
+
+
+def store_sections(
+    conn: sqlite3.Connection, accession_no: str, sections: dict[str, Section]
+) -> ExtractResult:
+    """Write sections for one filing, replacing any previous extraction of it.
+
+    Filings never change, but the extractor does, so a better parse has to be able to
+    supersede a worse one without leaving both rows behind. Low-confidence sections are
+    stored too, flagged: dropping them would leave the analysis layer unable to tell a
+    bad parse from a section the filer simply never wrote.
+    """
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    result = ExtractResult(accession_no=accession_no)
+    with conn:
+        for item, section in sorted(sections.items()):
+            conn.execute(
+                """
+                INSERT INTO document_section
+                    (accession_no, item, text, extraction_confidence, char_count,
+                     extracted_at, heading, ended_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(accession_no, item) DO UPDATE SET
+                    text = excluded.text,
+                    extraction_confidence = excluded.extraction_confidence,
+                    char_count = excluded.char_count,
+                    extracted_at = excluded.extracted_at,
+                    heading = excluded.heading,
+                    ended_at = excluded.ended_at
+                """,
+                (
+                    accession_no,
+                    item,
+                    section.text,
+                    section.confidence,
+                    section.char_count,
+                    now,
+                    section.heading,
+                    section.ended_at,
+                ),
+            )
+            result.sections += 1
+            result.items.append(item)
+            result.lowest_confidence = min(result.lowest_confidence, section.confidence)
+    if not result.items:
+        result.lowest_confidence = 0.0
+    return result
+
+
+def extract_filing(
+    conn: sqlite3.Connection,
+    accession_no: str,
+    raw_html: str,
+    items: tuple[str, ...] | list[str] = DEFAULT_ITEMS,
+) -> ExtractResult:
+    """Extract one filing's sections and write them to the store."""
+    return store_sections(conn, accession_no, extract_sections(raw_html, items))

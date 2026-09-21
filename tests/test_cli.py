@@ -147,6 +147,130 @@ class TestUserAgentFailure:
         assert "Traceback" not in err
 
 
+class TestExtractCommand:
+    """`dossier extract` reads the filing table and writes document_section. It needs a
+    filing already ingested, which is the component boundary doing its job: stages talk
+    through the store, never by calling each other."""
+
+    @pytest.fixture
+    def edgar_with_filings(self):
+        """EDGAR serving both the submissions/facts JSON and a 10-K document."""
+        from dossier.edgar import EdgarClient
+
+        submissions = (FIXTURES / "submissions_CIK0000320193.json").read_text()
+        facts = (FIXTURES / "companyfacts_CIK0000320193.json").read_text()
+        tenk = (FIXTURES / "filings" / "tenk_with_toc.html").read_text()
+        as_json = {"content-type": "application/json"}
+
+        def handler(request):
+            url = str(request.url)
+            if "/submissions/" in url:
+                return httpx.Response(200, text=submissions, headers=as_json)
+            if "/companyfacts/" in url:
+                return httpx.Response(200, text=facts, headers=as_json)
+            if url.endswith(".htm"):
+                return httpx.Response(200, text=tenk, headers={"content-type": "text/html"})
+            return httpx.Response(404)
+
+        return EdgarClient(VALID_UA, transport=httpx.MockTransport(handler), sleep=lambda _: None)
+
+    @pytest.fixture
+    def ingested(self, data_dir, edgar_with_filings, capsys):
+        main(["ingest", "--cik", "320193"], client=edgar_with_filings)
+        capsys.readouterr()
+        return data_dir
+
+    def test_extracts_the_filers_ten_ks(self, ingested, edgar_with_filings, capsys):
+        assert main(["extract", "--cik", "320193", "--json"], client=edgar_with_filings) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["command"] == "extract"
+        statuses = {r["accession"]: r["status"] for r in payload["results"]}
+        # Addressed by accession rather than by position: the filer's stub filing sorts
+        # alongside the real ones, and a positional assertion would be testing the sort.
+        assert statuses["0000320193-24-000123"] == "extracted"
+        assert statuses["0000320193-23-000106"] == "extracted"
+
+    def test_writes_document_sections(self, ingested, edgar_with_filings, capsys):
+        main(["extract", "--cik", "320193", "--json"], client=edgar_with_filings)
+        with open_store(ingested / "edgar.sqlite") as conn:
+            items = {row["item"] for row in conn.execute("SELECT item FROM document_section")}
+        assert "1A" in items
+
+    def test_only_touches_ten_ks(self, ingested, edgar_with_filings, capsys):
+        """The 10-Q in the fixture has no Item 1A worth diffing; Pass A reads 10-Ks."""
+        main(["extract", "--cik", "320193", "--json"], client=edgar_with_filings)
+        with open_store(ingested / "edgar.sqlite") as conn:
+            forms = {
+                row["form_type"]
+                for row in conn.execute(
+                    "SELECT DISTINCT f.form_type FROM filing f "
+                    "JOIN document_section d ON d.accession_no = f.accession_no"
+                )
+            }
+        assert forms == {"10-K"}
+
+    def test_a_second_run_is_cached(self, ingested, edgar_with_filings, capsys):
+        main(["extract", "--cik", "320193", "--json"], client=edgar_with_filings)
+        capsys.readouterr()
+        main(["extract", "--cik", "320193", "--json"], client=edgar_with_filings)
+        statuses = {
+            r["accession"]: r["status"] for r in json.loads(capsys.readouterr().out)["results"]
+        }
+        assert statuses["0000320193-24-000123"] == "cached"
+
+    def test_reports_the_weakest_section(self, ingested, edgar_with_filings, capsys):
+        """So a filing worth checking by hand is visible without a second query."""
+        main(["extract", "--cik", "320193", "--json"], client=edgar_with_filings)
+        results = {r["accession"]: r for r in json.loads(capsys.readouterr().out)["results"]}
+        result = results["0000320193-24-000123"]
+        assert 0.0 <= result["lowest_confidence"] <= 1.0
+        assert "1A" in result["items"]
+
+    def test_a_single_accession_can_be_named(self, ingested, edgar_with_filings, capsys):
+        main(
+            ["extract", "--accession", "0000320193-24-000123", "--json"],
+            client=edgar_with_filings,
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert len(payload["results"]) == 1
+
+    def test_says_so_when_there_is_nothing_to_extract(self, data_dir, edgar, capsys):
+        assert main(["extract", "--cik", "999", "--json"], client=edgar) == 0
+        assert json.loads(capsys.readouterr().out)["results"] == []
+
+    def test_a_filing_with_no_document_url_is_reported_but_not_a_failure(
+        self, ingested, edgar_with_filings, capsys
+    ):
+        """Stub filings, created during ingest for accessions outside the submissions
+        window, have no document to fetch. Reporting them matters — passing over them
+        silently would leave a gap nobody notices — but they are not failures: a failed
+        job would sit in the resume queue forever retrying what cannot succeed until
+        ingest supplies a URL."""
+        with open_store(ingested / "edgar.sqlite") as conn:
+            conn.execute(
+                "UPDATE filing SET form_type = '10-K' WHERE accession_no = '0000320193-99-999999'"
+            )
+            conn.commit()
+        main(["extract", "--cik", "320193", "--json"], client=edgar_with_filings)
+        payload = json.loads(capsys.readouterr().out)
+        statuses = {r["accession"]: r["status"] for r in payload["results"]}
+        assert statuses["0000320193-99-999999"] == "no_document"
+        assert payload["failures"] == 0
+
+    def test_a_filing_with_no_document_url_never_enters_the_resume_queue(
+        self, ingested, edgar_with_filings, capsys
+    ):
+        with open_store(ingested / "edgar.sqlite") as conn:
+            conn.execute(
+                "UPDATE filing SET form_type = '10-K' WHERE accession_no = '0000320193-99-999999'"
+            )
+            conn.commit()
+        main(["extract", "--cik", "320193", "--json"], client=edgar_with_filings)
+        capsys.readouterr()
+        main(["resume", "--json"], client=edgar_with_filings)
+        assert json.loads(capsys.readouterr().out)["results"] == []
+
+
 class TestMachineReadableOutput:
     """Every command speaks JSON on request.
 

@@ -49,8 +49,14 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier ingest --cik N --json` | Fetch one filer from EDGAR into the store. Repeatable. |
 | `dossier ingest --limit N --json` | Fetch the first N filers from the ticker map. |
 | `dossier ingest ... --force --json` | Re-run filers already ingested. |
+| `dossier extract --cik N --json` | Pull Item sections out of that filer's 10-Ks. |
+| `dossier extract --accession A --json` | Extract one named filing. |
+| `dossier extract ... --force --json` | Re-extract filings already done. |
 | `dossier status --json` | What the store holds and what work is pending. |
 | `dossier resume --json` | Retry everything pending or failed. |
+
+`extract` needs filings already ingested — stages talk through the store, never by
+calling each other, so `ingest` comes first.
 
 Run them with `uv run dossier ...` so the project's own environment is used.
 
@@ -63,6 +69,22 @@ configuration problem (the message is on stderr).
 `status` of `ingested`, `cached`, `failed` or `skipped`. A `cached` result is not a
 no-op to apologise for — it means the work was already done and correctly skipped.
 `failed` entries stay resumable; suggest `dossier resume` rather than re-running ingest.
+
+`extract` returns the same shape per filing, plus `items`, `sections` and
+`lowest_confidence`. Two statuses are specific to it:
+
+- `no_document` — a stub filing with no document URL, created during ingest for an
+  accession outside the submissions window. Not a failure, and deliberately not
+  resumable: there is nothing to retry until ingest supplies a URL.
+- `extracted` with a low `lowest_confidence` — the parse succeeded but something about
+  it is doubtful. Check `extraction_confidence`, `heading` and `ended_at` on the
+  `document_section` row before using that section for anything.
+
+**Extraction confidence is not decoration.** 10-K item boundaries are inconsistent, and
+a bad parse looks exactly like a good one until you read it. Anything below about 0.6 on
+Item 1A should be looked at rather than analysed. Confidence is scored per item, so a
+five-character Item 1B is fine — "None." is what most filings say — while a
+five-hundred-character Item 1A is not.
 
 ## Workflows
 

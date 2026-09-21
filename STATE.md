@@ -38,7 +38,7 @@ reads 383,285,000,000 from the original 10-K on 2023-11-03, and reads the restat
 
 - Nothing. Milestone 1 is a clean stopping point.
 
-## Next concrete step
+## Next concrete step (superseded — see below)
 
 **Milestone 4, not milestone 2.** The plan's own build-order note says to get to Pass A
 (the risk-factor diff) as early as you can stand to, because it is the cheapest test of
@@ -54,6 +54,21 @@ project is real.
 One thing to decide before then: a live ingest has never been run, because this
 environment cannot reach sec.gov. Run `dossier ingest --limit 500` on your own machine
 once to confirm the client behaves against the real SEC.
+
+## Next concrete step
+
+**Pass A — the risk-factor diff.** The extractor now produces Item 1A from two
+consecutive 10-Ks, which is exactly Pass A's input. What remains: a prompt that takes
+two Item 1A texts and reports what was added, removed, reordered or quietly softened,
+with a verbatim quote and accession number behind every finding, and a validator that
+string-matches each quote against its source before the finding is allowed through.
+
+Before trusting any of it: run `dossier extract` against real 10-Ks and hand-check the
+confidence scores. Every fixture in this repo is synthetic, because the sessions that
+built the extractor could not reach `sec.gov`. The fixtures encode the hazards found by
+reasoning about real filings — a table of contents, running page headers, tags splitting
+a heading, a missing Item 1B — but real filings are messier than anything written from
+the outside, and the plan budgets real time for this for good reason.
 
 ## Outstanding, and only you can do it
 
@@ -82,7 +97,7 @@ the local web app and packaging down, and Pass A up.
 | # | Milestone | Status |
 | --- | --- | --- |
 | 1 | Job table + EDGAR ingest → SQLite, `filed_date` enforced | **done** (not yet run live) |
-| 2 | Section extractor for Item 1A / 7 / footnotes | next, but only as far as milestone 4 needs |
+| 2 | Section extractor for Item 1A / 7 / footnotes | **done in substance** — unvalidated against real filings |
 | 4 | Pass A (risk-factor diff) end to end, one company | **the real next goal** |
 | 3 | Five screens as SQL views + JSON output | after Pass A proves out |
 | 8 | Valuation engine with bear/base/bull | not started |
