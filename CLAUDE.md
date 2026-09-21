@@ -91,6 +91,23 @@ Code in this repo. Data on the user's machine, never inside the checkout.
 | Test fixtures (a few real filings) | This repo — small, needed for CI |
 | Sample database | A GitHub Releases asset, to keep clones small |
 
+## Git and branches
+
+`main` is protected. Nothing is pushed to it directly — every change arrives by pull
+request with `ci-green` passing.
+
+- Agent sessions work on `claude/*` branches and push only there.
+- Cloud sessions never hold a GitHub token. The credential is held by the egress proxy
+  and scoped to this repository, so a session can use it but cannot read or copy it.
+- The `ci-green` job in `.github/workflows/ci.yml` exists solely to give branch
+  protection one stably-named check to require. Requiring the matrix jobs by name means
+  four names that change whenever the matrix does, and a required check that no longer
+  exists is silently skipped rather than enforced. Do not rename or remove `ci-green`
+  without updating the protection rule; `tests/test_ci_workflow.py` guards its shape.
+
+The reason all of this is in GitHub settings rather than in this file: an instruction to
+an agent is not a control. This paragraph cannot stop a bad push. Branch protection can.
+
 ## Conventions
 
 - `pathlib` everywhere; no shell-specific scripts. The primary dev machine is Windows and CI

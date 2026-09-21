@@ -42,3 +42,20 @@ jobs:
       # Network tests are deselected by default, so nothing here touches sec.gov.
       - name: Test
         run: uv run pytest
+
+  # A single, stably-named check for branch protection to require.
+  #
+  # Requiring the matrix jobs directly means listing `test (ubuntu-latest, 3.11)` and
+  # its three siblings, and those names change whenever the matrix does. A required
+  # check that no longer exists is not enforced — it is silently skipped — so the
+  # protection rule would quietly become vacuous. This job has one job: be that name.
+  ci-green:
+    name: ci-green
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every matrix job succeeded
+        run: |
+          echo "test matrix result: ${{ needs.test.result }}"
+          test "${{ needs.test.result }}" = "success"
