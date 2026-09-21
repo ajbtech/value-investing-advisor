@@ -3,6 +3,10 @@
 Each stage is independently runnable and restartable, and communicates with the others
 only through the store. A session cut off mid-run loses one filing's worth of work; the
 next session's first command picks up exactly where it stopped.
+
+Every command takes `--json`. This is the interface an agent drives as much as one a
+person types at, and that only works if stdout carries parseable output and nothing
+else — a stray progress line turns a parse into a guess. Errors always go to stderr.
 """
 
 from __future__ import annotations
@@ -21,6 +25,16 @@ from dossier.store import open_store
 
 
 def build_parser() -> argparse.ArgumentParser:
+    # Options every subcommand shares. `--json` belongs on all of them, so it lives
+    # here rather than being repeated and eventually forgotten on a new one.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="emit machine-readable JSON on stdout and nothing else",
+    )
+
     parser = argparse.ArgumentParser(
         prog="dossier",
         description=(
@@ -31,7 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"dossier {__version__}")
     subcommands = parser.add_subparsers(dest="command", metavar="<command>")
 
-    ingest = subcommands.add_parser("ingest", help="fetch filers from EDGAR into the store")
+    ingest = subcommands.add_parser(
+        "ingest", parents=[common], help="fetch filers from EDGAR into the store"
+    )
     ingest.add_argument(
         "--cik",
         action="append",
@@ -46,15 +62,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="ingest this many filers from the ticker map instead of naming them",
     )
     ingest.add_argument(
-        "--force",
-        action="store_true",
-        help="re-run even for filers already ingested",
+        "--force", action="store_true", help="re-run even for filers already ingested"
     )
 
-    status = subcommands.add_parser("status", help="what is in the store and what work is pending")
-    status.add_argument("--json", action="store_true", help="machine-readable output")
-
-    subcommands.add_parser("resume", help="retry jobs that are pending or have failed")
+    subcommands.add_parser(
+        "status", parents=[common], help="what is in the store and what work is pending"
+    )
+    subcommands.add_parser(
+        "resume", parents=[common], help="retry jobs that are pending or have failed"
+    )
     return parser
 
 
@@ -74,10 +90,10 @@ def main(argv: list[str] | None = None, *, client: EdgarClient | None = None) ->
         if args.command == "status":
             return _status(args, config)
         if args.command == "resume":
-            return _resume(config, client)
+            return _resume(args, config, client)
     except InvalidUserAgent as exc:
         # The most likely first-run failure in the whole tool. It should read as an
-        # instruction, not as a stack trace.
+        # instruction, not as a stack trace — and never on stdout, which may be a pipe.
         print(str(exc), file=sys.stderr)
         return 2
     except SecBlocked as exc:
@@ -86,35 +102,68 @@ def main(argv: list[str] | None = None, *, client: EdgarClient | None = None) ->
     return 2
 
 
+def _emit(payload: dict) -> None:
+    print(json.dumps(payload, indent=2, default=str))
+
+
+def _say(as_json: bool, message: str) -> None:
+    """Human-facing progress. Suppressed entirely under --json."""
+    if not as_json:
+        print(message)
+
+
 def _client(client: EdgarClient | None) -> EdgarClient:
     return client if client is not None else EdgarClient.from_env()
 
 
-def _ingest_one(queue: JobQueue, conn, edgar: EdgarClient, cik: int, force: bool) -> str:
-    """Ingest one filer as one job. Returns a one-line report for the console."""
+def _ingest_one(queue: JobQueue, conn, edgar: EdgarClient, cik: int, force: bool) -> dict:
+    """Ingest one filer as one job. Returns a structured result for either output mode."""
     inputs = {"cik": cik}
     key = idempotency_key("ingest_filer", inputs)
-    cached = queue.completed(key)
-    if cached is not None and not force:
-        return f"  {cik}: cached"
+    result: dict = {"cik": cik, "status": None, "error": None}
+
+    if queue.completed(key) is not None and not force:
+        result["status"] = "cached"
+        return result
 
     job = queue.enqueue("ingest_filer", inputs)
     if force and job.status == "done":
         queue.reopen(job)
     claimed = queue.claim_by_key(key)
     if claimed is None:
-        return f"  {cik}: skipped (too many failed attempts)"
+        result["status"] = "skipped"
+        result["error"] = "too many failed attempts"
+        return result
 
     try:
         submissions = edgar.submissions(cik)
         facts = edgar.company_facts(cik)
-        result = ingest_filer(conn, submissions, facts)
+        ingested = ingest_filer(conn, submissions, facts)
     except Exception as exc:  # one bad filer must not cost the other 499
         queue.fail(claimed, f"{type(exc).__name__}: {exc}")
-        return f"  {cik}: failed — {type(exc).__name__}: {exc}"
+        result["status"] = "failed"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
 
-    queue.finish(claimed, json.dumps(result.__dict__, default=list))
-    return f"  {cik}: {result.filings} filings, {result.facts_inserted} new facts"
+    queue.finish(claimed, json.dumps(ingested.__dict__, default=list))
+    result.update(
+        status="ingested",
+        filings=ingested.filings,
+        facts=ingested.facts,
+        facts_inserted=ingested.facts_inserted,
+        stub_filings=ingested.stub_filings,
+    )
+    return result
+
+
+def _describe(result: dict) -> str:
+    if result["status"] == "cached":
+        return f"  {result['cik']}: cached"
+    if result["status"] == "ingested":
+        return (
+            f"  {result['cik']}: {result['filings']} filings, {result['facts_inserted']} new facts"
+        )
+    return f"  {result['cik']}: {result['status']} — {result['error']}"
 
 
 def _ingest(args, config: Config, client: EdgarClient | None) -> int:
@@ -127,16 +176,27 @@ def _ingest(args, config: Config, client: EdgarClient | None) -> int:
         print("dossier ingest: give it --cik or --limit", file=sys.stderr)
         return 2
 
-    print(f"Ingesting {len(ciks)} filer(s) into {config.store_path}")
-    failures = 0
+    _say(args.as_json, f"Ingesting {len(ciks)} filer(s) into {config.store_path}")
+    results = []
     with open_store(config.store_path) as conn:
         queue = JobQueue(conn, output_dir=config.output_dir)
         for cik in ciks:
-            line = _ingest_one(queue, conn, edgar, cik, args.force)
-            if "failed" in line:
-                failures += 1
-            print(line)
-    if failures:
+            result = _ingest_one(queue, conn, edgar, cik, args.force)
+            results.append(result)
+            _say(args.as_json, _describe(result))
+
+    failures = sum(1 for r in results if r["status"] in ("failed", "skipped"))
+    if args.as_json:
+        _emit(
+            {
+                "command": "ingest",
+                "store": str(config.store_path),
+                "requested": len(ciks),
+                "failures": failures,
+                "results": results,
+            }
+        )
+    elif failures:
         print(f"{failures} filer(s) failed; `dossier resume` will retry them", file=sys.stderr)
     return 1 if failures else 0
 
@@ -145,6 +205,7 @@ def _status(args, config: Config) -> int:
     with open_store(config.store_path) as conn:
         queue = JobQueue(conn, output_dir=config.output_dir)
         payload = {
+            "command": "status",
             "store": str(config.store_path),
             "filers": conn.execute("SELECT COUNT(*) FROM filer").fetchone()[0],
             "filings": conn.execute("SELECT COUNT(*) FROM filing").fetchone()[0],
@@ -152,41 +213,58 @@ def _status(args, config: Config) -> int:
             "jobs": queue.status_counts(),
             "resumable": len(queue.resumable()),
         }
-    if args.json:
-        print(json.dumps(payload, indent=2))
+    if args.as_json:
+        _emit(payload)
         return 0
     print(f"Store:    {payload['store']}")
     print(f"Filers:   {payload['filers']}")
     print(f"Filings:  {payload['filings']}")
     print(f"Facts:    {payload['facts']}")
-    jobs = payload["jobs"]
-    summary = ", ".join(f"{status} {count}" for status, count in sorted(jobs.items()))
+    summary = ", ".join(f"{status} {count}" for status, count in sorted(payload["jobs"].items()))
     print(f"Jobs:     {summary or 'none yet'}")
     if payload["resumable"]:
         print(f"\n{payload['resumable']} job(s) can be resumed with `dossier resume`")
     return 0
 
 
-def _resume(config: Config, client: EdgarClient | None) -> int:
+def _resume(args, config: Config, client: EdgarClient | None) -> int:
+    results = []
     with open_store(config.store_path) as conn:
         queue = JobQueue(conn, output_dir=config.output_dir)
         queue.reclaim_stale()
         pending = queue.resumable()
-        if not pending:
-            print("Nothing to resume.")
-            return 0
 
-        edgar = _client(client)
-        print(f"Resuming {len(pending)} job(s)")
-        failures = 0
-        for job in pending:
-            if job.job_type != "ingest_filer":
-                print(f"  {job.job_id}: no handler for {job.job_type}, leaving it")
-                continue
-            line = _ingest_one(queue, conn, edgar, job.inputs["cik"], force=False)
-            if "failed" in line:
-                failures += 1
-            print(line)
+        if pending:
+            edgar = _client(client)
+            _say(args.as_json, f"Resuming {len(pending)} job(s)")
+            for job in pending:
+                if job.job_type != "ingest_filer":
+                    results.append(
+                        {
+                            "job_id": job.job_id,
+                            "job_type": job.job_type,
+                            "status": "unhandled",
+                            "error": f"no handler for {job.job_type}",
+                        }
+                    )
+                    _say(args.as_json, f"  {job.job_id}: no handler for {job.job_type}, leaving it")
+                    continue
+                result = _ingest_one(queue, conn, edgar, job.inputs["cik"], force=False)
+                results.append(result)
+                _say(args.as_json, _describe(result))
+        else:
+            _say(args.as_json, "Nothing to resume.")
+
+    failures = sum(1 for r in results if r["status"] in ("failed", "skipped"))
+    if args.as_json:
+        _emit(
+            {
+                "command": "resume",
+                "resumed": len(results),
+                "failures": failures,
+                "results": results,
+            }
+        )
     return 1 if failures else 0
 
 

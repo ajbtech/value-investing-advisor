@@ -75,18 +75,35 @@ pushes and deletions on `main`.
 
 ## Milestone map
 
+Re-prioritised: the tool is driven from a Claude conversation first, and the decision on
+whether to publish it is deferred until there is something worth publishing. That moves
+the local web app and packaging down, and Pass A up.
+
 | # | Milestone | Status |
 | --- | --- | --- |
-| 1 | Job table + EDGAR ingest → SQLite, 500 filers, `filed_date` enforced | **done** (not yet run live) |
-| 2 | Section extractor for Item 1A / 7 / footnotes, tested on 50 filings | not started |
-| 3 | Five screens as SQL views + JSON output | not started |
-| 4 | Pass A (risk-factor diff) end to end, one company | not started |
-| 5 | FastAPI app: screen index + dossier + filing diff | not started |
-| 6 | Packaging, guided first run, sample database | not started |
-| 7 | Passes B, C, D | not started |
+| 1 | Job table + EDGAR ingest → SQLite, `filed_date` enforced | **done** (not yet run live) |
+| 2 | Section extractor for Item 1A / 7 / footnotes | next, but only as far as milestone 4 needs |
+| 4 | Pass A (risk-factor diff) end to end, one company | **the real next goal** |
+| 3 | Five screens as SQL views + JSON output | after Pass A proves out |
 | 8 | Valuation engine with bear/base/bull | not started |
 | 9 | Thesis generator + bear pass + journal | not started |
-| 10 | Quarterly falsification re-check job | not started |
+| 10 | Quarterly falsification re-check job | not started — the natural first Claude Routine |
+| 7 | Passes B, C, D | not started |
+| 5 | FastAPI app: screen index + dossier + filing diff | **deferred** — see below |
+| 6 | Packaging, guided first run, sample database | **deferred** — only if published |
+
+**Why 5 and 6 are deferred.** The plan justified a local web app because its views need
+live queries — arbitrary as-of dates, re-run screens at new thresholds, diff any two
+filings — and precomputing that is combinatorially hopeless. That argument does not
+apply when the front end is a conversation: nothing is precomputed, because Claude
+re-runs the CLI on request. The remaining views are documents, and documents render as
+artifacts. If this is ever published for other people, milestones 5 and 6 come back.
+
+**Routines.** Milestone 10 (the quarterly falsification re-check) is the one piece of
+genuinely scheduled work, and the plan calls it the highest-leverage feature in the
+system. It must run where the data is: the store lives in a per-user data directory and
+cloud sessions cannot reach `sec.gov`, so a Routine for it has to be bound to the user's
+own computer.
 
 Build-order note from the plan: get to milestone 4 as early as you can stand to. It is the
 cheapest possible test of whether the idea works at all. Keep milestone 1 tight rather than
