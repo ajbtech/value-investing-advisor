@@ -97,7 +97,7 @@ public, driven from Claude Code on an existing subscription rather than an API k
 | --- | --- | --- |
 | 1 | Job table + EDGAR ingest → SQLite, `filed_date` enforced | **done** (not yet run live) |
 | 2 | Section extractor for Item 1A / 7 / footnotes | **done in substance** — unvalidated against real filings |
-| 4 | Pass A (risk-factor diff) end to end, one company | **next, and the gate** |
+| 4 | Pass A (risk-factor diff) end to end, one company | **built** — prepare/load flow, unproven on a real filing |
 | 3 | Five screens as SQL views + JSON output | after Pass A proves out |
 | 8 | Valuation engine with bear/base/bull | not started |
 | 9 | Thesis generator + bear pass + journal | **raised** — compounds for a single user |

@@ -14,8 +14,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from dossier import __version__
+from dossier.analysis import PASS_A_VERSION, load_findings, prepare_pass_a
 from dossier.asof import fact_count
 from dossier.config import Config
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
@@ -76,6 +78,26 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--limit", type=int, help="stop after this many filings")
     extract.add_argument("--force", action="store_true", help="re-extract filings already done")
 
+    analyze = subcommands.add_parser(
+        "analyze",
+        parents=[common],
+        help="prepare an analysis pass, or load its findings back",
+    )
+    analyze.add_argument("--pass", dest="pass_name", default="a", choices=["a"])
+    analyze.add_argument("--cik", type=int, required=True, metavar="CIK")
+    analyze.add_argument("--item", default="1A", help="the section to compare")
+    analyze.add_argument(
+        "--prepare",
+        action="store_true",
+        help="write the pass's input for a model to read",
+    )
+    analyze.add_argument(
+        "--load",
+        metavar="FILE",
+        help="read findings back, validate every quote, and store what survives",
+    )
+    analyze.add_argument("--out", metavar="FILE", help="write prepared input here")
+
     subcommands.add_parser(
         "status", parents=[common], help="what is in the store and what work is pending"
     )
@@ -100,6 +122,8 @@ def main(argv: list[str] | None = None, *, client: EdgarClient | None = None) ->
             return _ingest(args, config, client)
         if args.command == "extract":
             return _extract(args, config, client)
+        if args.command == "analyze":
+            return _analyze(args, config)
         if args.command == "status":
             return _status(args, config)
         if args.command == "resume":
@@ -317,6 +341,74 @@ def _extract(args, config: Config, client: EdgarClient | None) -> int:
             }
         )
     return 1 if failures else 0
+
+
+def _analyze(args, config: Config) -> int:
+    """Two halves with a person in the middle: prepare, then load.
+
+    The model is a Claude Code session rather than an API call, so nothing here talks to
+    one. `--prepare` hands over what the pass reads; `--load` takes the findings back
+    and puts them through the validator.
+    """
+    if not args.prepare and not args.load:
+        print("dossier analyze: give it --prepare or --load FILE", file=sys.stderr)
+        return 2
+
+    with open_store(config.store_path) as conn:
+        if args.prepare:
+            try:
+                prepared = prepare_pass_a(conn, cik=args.cik, item=args.item)
+            except ValueError as exc:
+                print(f"dossier analyze: {exc}", file=sys.stderr)
+                return 2
+            payload = prepared.to_dict()
+            if args.out:
+                Path(args.out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                _say(args.as_json, f"Wrote Pass {args.pass_name} input to {args.out}")
+            if args.as_json or not args.out:
+                _emit(payload)
+            return 0
+
+        source = Path(args.load)
+        if not source.exists():
+            print(f"dossier analyze: no such file {source}", file=sys.stderr)
+            return 2
+        try:
+            findings_payload = json.loads(source.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"dossier analyze: {source} is not valid JSON — {exc}", file=sys.stderr)
+            return 2
+
+        result = load_findings(
+            conn,
+            cik=args.cik,
+            payload=findings_payload,
+            item=args.item,
+            pass_name=args.pass_name,
+        )
+
+    if args.as_json:
+        _emit(
+            {
+                "command": "analyze",
+                "pass": args.pass_name,
+                "cik": args.cik,
+                "prompt_version": PASS_A_VERSION,
+                "kept": result.kept,
+                "dropped": result.dropped,
+                "drop_reasons": result.drop_reasons,
+                "fabrication_rate": result.fabrication_rate,
+            }
+        )
+    else:
+        print(f"Kept {result.kept} finding(s), dropped {result.dropped}")
+        for reason, count in sorted(result.drop_reasons.items()):
+            print(f"  {reason}: {count}")
+        rate = result.fabrication_rate
+        # None, not 0.0, when there was nothing to measure: a pass that produced no
+        # findings has not earned a clean bill of health.
+        print(f"Fabrication rate: {'n/a' if rate is None else f'{rate:.0%}'}")
+    return 1 if result.dropped else 0
 
 
 def _status(args, config: Config) -> int:
