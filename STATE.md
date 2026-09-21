@@ -55,6 +55,15 @@ One thing to decide before then: a live ingest has never been run, because this
 environment cannot reach sec.gov. Run `dossier ingest --limit 500` on your own machine
 once to confirm the client behaves against the real SEC.
 
+## Outstanding, and only you can do it
+
+**Branch protection on `main` has not been applied yet.** `CLAUDE.md` states the rule
+and `ci-green` exists for it to require, but the GitHub setting itself needs repository
+admin, which no agent session has. Until it is applied, the branch discipline rests on
+instructions rather than on a control. The exact settings are in the session notes; the
+short version is: require a pull request, require the `ci-green` check, forbid force
+pushes and deletions on `main`.
+
 ## Known environment constraints
 
 - **`sec.gov` is unreachable from the Claude Code cloud sessions** used to build this
