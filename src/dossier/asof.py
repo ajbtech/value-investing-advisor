@@ -189,3 +189,13 @@ class AsOfView:
             params.append(_as_date(since).isoformat())
         sql += " ORDER BY status_date, cik"
         return [Filer.from_row(row) for row in self.conn.execute(sql, params)]
+
+
+def fact_count(conn: sqlite3.Connection) -> int:
+    """How many fact rows the store holds, for status output.
+
+    This is not an as-of question, but it lives here anyway: the invariant is that
+    this module is the *only* one that reads the fact table, and an exception for
+    "harmless" reads is how that invariant would quietly die.
+    """
+    return conn.execute("SELECT COUNT(*) FROM fact").fetchone()[0]

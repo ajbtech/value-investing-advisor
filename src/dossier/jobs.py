@@ -225,6 +225,42 @@ class JobQueue:
                 return self.get(row["job_id"])
             # Another worker took it between the select and the update; look again.
 
+    def claim_by_key(self, key: str) -> Job | None:
+        """Claim one named unit of work, rather than whatever comes next.
+
+        A stage that already knows which filing it is processing wants this; `claim()`
+        is for a worker draining the queue.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM job WHERE idempotency_key = ? AND status IN ('pending', 'failed') "
+            "AND attempts < ?",
+            (key, MAX_ATTEMPTS),
+        ).fetchone()
+        if row is None:
+            return None
+        with self.conn:
+            cursor = self.conn.execute(
+                "UPDATE job SET status = 'running', attempts = attempts + 1, started_at = ? "
+                "WHERE job_id = ? AND status = ?",
+                (_now(), row["job_id"], row["status"]),
+            )
+        return self.get(row["job_id"]) if cursor.rowcount == 1 else None
+
+    def reopen(self, job: Job) -> Job:
+        """Make a settled job eligible again, for `--force`.
+
+        Prompts get retuned and extractors get fixed, so cached work sometimes has to
+        be redone deliberately. The attempt count resets too — otherwise a job that
+        already failed twice comes back with one attempt left and gives up at once.
+        """
+        with self.conn:
+            self.conn.execute(
+                "UPDATE job SET status = 'pending', attempts = 0, output_path = NULL, "
+                "error = NULL, started_at = NULL, finished_at = NULL WHERE job_id = ?",
+                (job.job_id,),
+            )
+        return self.get(job.job_id)
+
     def finish(self, job: Job, payload: str | bytes, *, cost_tokens: int = 0) -> Job:
         """Write the output durably, and only then mark the job done."""
         path = self.output_dir / job.job_type / f"{job.idempotency_key}.json"

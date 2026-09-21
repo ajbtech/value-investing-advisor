@@ -216,3 +216,65 @@ class TestResume:
         queue.enqueue("ingest_filer", {"cik": 2})
         queue.claim()
         assert queue.status_counts() == {"pending": 1, "running": 1}
+
+
+class TestClaimByKey:
+    """A stage that knows exactly which unit of work it wants claims it directly,
+    rather than taking whatever the queue hands out next."""
+
+    def test_claims_the_named_job(self, queue):
+        queue.enqueue("ingest_filer", {"cik": 1})
+        wanted = queue.enqueue("ingest_filer", {"cik": 320193})
+
+        claimed = queue.claim_by_key(idempotency_key("ingest_filer", {"cik": 320193}))
+        assert claimed.job_id == wanted.job_id
+        assert claimed.status == "running"
+        assert claimed.attempts == 1
+
+    def test_returns_none_for_an_unknown_key(self, queue):
+        assert queue.claim_by_key(idempotency_key("ingest_filer", {"cik": 1})) is None
+
+    def test_returns_none_for_a_job_already_running(self, queue):
+        queue.enqueue("ingest_filer", {"cik": 1})
+        key = idempotency_key("ingest_filer", {"cik": 1})
+        queue.claim_by_key(key)
+        assert queue.claim_by_key(key) is None
+
+    def test_returns_none_once_the_attempt_limit_is_spent(self, queue):
+        queue.enqueue("ingest_filer", {"cik": 1})
+        key = idempotency_key("ingest_filer", {"cik": 1})
+        for _ in range(MAX_ATTEMPTS):
+            queue.fail(queue.claim_by_key(key), "broken")
+        assert queue.claim_by_key(key) is None
+
+
+class TestReopen:
+    """`--force` exists because prompts get retuned and extractors get fixed. It has to
+    reset the attempt count too, or a job that failed twice comes back nearly spent."""
+
+    def test_makes_a_completed_job_claimable_again(self, queue):
+        job = queue.enqueue("pass_a", {"cik": 1})
+        queue.claim()
+        queue.finish(job, "{}")
+
+        reopened = queue.reopen(job)
+        assert reopened.status == "pending"
+        assert reopened.attempts == 0
+        assert reopened.finished_at is None
+        assert queue.claim() is not None
+
+    def test_clears_the_previous_output_path(self, queue):
+        job = queue.enqueue("pass_a", {"cik": 1})
+        queue.claim()
+        queue.finish(job, "{}")
+        assert queue.reopen(job).output_path is None
+
+    def test_revives_a_job_that_had_given_up(self, queue):
+        queue.enqueue("ingest_filer", {"cik": 1})
+        key = idempotency_key("ingest_filer", {"cik": 1})
+        for _ in range(MAX_ATTEMPTS):
+            queue.fail(queue.claim_by_key(key), "broken")
+        assert queue.claim_by_key(key) is None
+
+        queue.reopen(queue.find(key))
+        assert queue.claim_by_key(key) is not None

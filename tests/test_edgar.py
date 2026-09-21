@@ -76,6 +76,14 @@ class TestUserAgent:
             EdgarClient.from_env(transport=always())
         assert "EDGAR_USER_AGENT" in str(excinfo.value)
 
+    def test_says_it_is_unset_rather_than_printing_none(self, monkeypatch):
+        """`Invalid EDGAR User-Agent None.` tells a first-time user nothing."""
+        monkeypatch.delenv("EDGAR_USER_AGENT", raising=False)
+        with pytest.raises(InvalidUserAgent) as excinfo:
+            EdgarClient.from_env(transport=always())
+        assert "None" not in str(excinfo.value)
+        assert "not set" in str(excinfo.value).lower()
+
 
 class TestHeaders:
     def test_declares_the_user_agent_on_every_request(self):

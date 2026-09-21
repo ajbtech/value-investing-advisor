@@ -10,7 +10,7 @@ from datetime import date
 
 import pytest
 
-from dossier.asof import AsOfView
+from dossier.asof import AsOfView, fact_count
 from dossier.store import open_store
 
 # Apple's FY2023 10-K: period ended 2023-09-30, filed 2023-11-03. Sixty-four days in
@@ -153,6 +153,11 @@ class TestSurvivorshipBias:
         """Not a missing value. Treating it as one is how a backtest invents an edge."""
         failed = AsOfView(mixed, as_of="2024-06-30").terminated(since="2023-01-01")
         assert [(f.cik, f.status) for f in failed] == [(1090727, "delisted_for_cause")]
+
+
+class TestFactCount:
+    def test_counts_every_version_not_every_period(self, store):
+        assert fact_count(store) == 1
 
 
 class TestThereIsNoOtherReadPath:

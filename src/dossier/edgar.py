@@ -109,8 +109,13 @@ class EdgarClient:
 
     @staticmethod
     def _validated(user_agent: str | None) -> str:
-        if not user_agent or not USER_AGENT_PATTERN.match(user_agent):
-            raise InvalidUserAgent(f"Invalid EDGAR User-Agent {user_agent!r}.\n\n{USER_AGENT_HELP}")
+        if user_agent is None or not user_agent.strip():
+            raise InvalidUserAgent(f"The EDGAR User-Agent is not set.\n\n{USER_AGENT_HELP}")
+        if not USER_AGENT_PATTERN.match(user_agent):
+            raise InvalidUserAgent(
+                f"The EDGAR User-Agent {user_agent!r} is not in the form the SEC "
+                f"requires.\n\n{USER_AGENT_HELP}"
+            )
         return user_agent
 
     @classmethod
