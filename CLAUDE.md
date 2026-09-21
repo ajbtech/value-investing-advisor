@@ -52,6 +52,27 @@ Every unit of work is a durable, idempotent job row. Nothing of value lives in m
   There is no other resume mechanism, and so nothing to get out of sync.
 - **Jobs never call other jobs.** A stage writes rows for the next stage to pick up.
 
+## Interfaces
+
+The CLI is the machine interface, not just a human one. It is what an agent drives, what
+CI exercises, and what makes every stage independently testable — so it stays, even
+though the primary way this tool is used is through a conversation with Claude.
+
+- **Every command takes `--json`** and emits parseable output on stdout and nothing else.
+  A stray progress line turns a parse into a guess. Errors go to stderr, always.
+- A new subcommand inherits `--json` from the shared parent parser. Do not add one
+  without it.
+- `.claude/skills/dossier/SKILL.md` teaches a Claude session how to drive the CLI. Keep
+  it current when commands change; a skill describing a flag that no longer exists is
+  worse than no skill.
+
+**Conversation is an unvalidated layer.** The quote validator protects what enters a
+dossier. It does not protect a summary of that dossier in chat. Restating a figure
+loosely, or describing what a filing "suggests" without quoting it, reintroduces exactly
+the fabrication this design exists to prevent — one step downstream, where nothing
+checks it. Quote, cite the accession number, link the filing. The dossier JSON is the
+record; chat is a lens on it, never a replacement.
+
 ## Component boundaries
 
 Each stage is a module with its own CLI entry point. Stages communicate *only* through the

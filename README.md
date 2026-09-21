@@ -47,10 +47,24 @@ uv run dossier status                  # what is in the store, and what work is 
 uv run dossier resume                  # retry whatever failed or was interrupted
 ```
 
+Every command takes `--json` and then emits parseable output on stdout and nothing else,
+so the pipeline can be driven by a script or by an agent as easily as by hand.
+
 Ingesting is safe to interrupt and safe to repeat: work already done is skipped.
 
 Data lives outside this checkout, in your per-user data directory
 (`%LOCALAPPDATA%\edgar-dossier` on Windows). Set `DOSSIER_DATA_DIR` to put it elsewhere.
+
+## Driving it from Claude
+
+The CLI is the machine interface; the intended way to use this day to day is to ask
+Claude, which runs the commands and presents the results. `.claude/skills/dossier/`
+teaches a Claude Code session how.
+
+One caveat worth stating plainly: the pipeline validates every quoted claim against its
+source filing before it enters a dossier, but that validation protects the *dossier*,
+not a chat summary of it. The dossier output is the record; treat anything paraphrased
+in conversation as a lens on it, and check the citation before acting on a number.
 
 ## Develop
 

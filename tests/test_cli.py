@@ -147,6 +147,85 @@ class TestUserAgentFailure:
         assert "Traceback" not in err
 
 
+class TestMachineReadableOutput:
+    """Every command speaks JSON on request.
+
+    The CLI is the interface an agent drives, not just one a person types at. That only
+    works if output is parseable and stdout carries nothing else — a stray progress line
+    turns a parse into a guess.
+    """
+
+    def test_ingest_emits_only_json_on_stdout(self, data_dir, edgar, capsys):
+        main(["ingest", "--cik", "320193", "--json"], client=edgar)
+        payload = json.loads(capsys.readouterr().out)  # raises if prose crept in
+        assert payload["command"] == "ingest"
+
+    def test_ingest_reports_each_filer(self, data_dir, edgar, capsys):
+        main(["ingest", "--cik", "320193", "--json"], client=edgar)
+        results = json.loads(capsys.readouterr().out)["results"]
+        assert len(results) == 1
+        assert results[0]["cik"] == 320193
+        assert results[0]["status"] == "ingested"
+        assert results[0]["filings"] == 3
+        assert results[0]["facts_inserted"] == 6
+
+    def test_ingest_marks_a_cache_hit(self, data_dir, edgar, capsys):
+        main(["ingest", "--cik", "320193"], client=edgar)
+        capsys.readouterr()
+        main(["ingest", "--cik", "320193", "--json"], client=edgar)
+        assert json.loads(capsys.readouterr().out)["results"][0]["status"] == "cached"
+
+    def test_ingest_reports_a_failure_without_breaking_the_parse(self, data_dir, capsys):
+        from dossier.edgar import EdgarClient
+
+        client = EdgarClient(
+            VALID_UA,
+            transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+            sleep=lambda _: None,
+            max_retries=1,
+        )
+        assert main(["ingest", "--cik", "1", "--json"], client=client) == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["failures"] == 1
+        assert payload["results"][0]["status"] == "failed"
+        assert payload["results"][0]["error"]
+
+    def test_resume_emits_json(self, data_dir, capsys):
+        assert main(["resume", "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["command"] == "resume"
+        assert payload["results"] == []
+
+    def test_resume_reports_what_it_retried(self, data_dir, edgar, capsys):
+        from dossier.edgar import EdgarClient
+
+        broken = EdgarClient(
+            VALID_UA,
+            transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+            sleep=lambda _: None,
+            max_retries=1,
+        )
+        main(["ingest", "--cik", "320193"], client=broken)
+        capsys.readouterr()
+
+        main(["resume", "--json"], client=edgar)
+        results = json.loads(capsys.readouterr().out)["results"]
+        assert [r["status"] for r in results] == ["ingested"]
+
+    def test_errors_go_to_stderr_so_stdout_stays_parseable(self, data_dir, monkeypatch, capsys):
+        monkeypatch.delenv("EDGAR_USER_AGENT", raising=False)
+        main(["ingest", "--cik", "320193", "--json"])
+        captured = capsys.readouterr()
+        assert captured.out.strip() == ""
+        assert "EDGAR_USER_AGENT" in captured.err
+
+    def test_human_output_is_unchanged_without_the_flag(self, data_dir, edgar, capsys):
+        main(["ingest", "--cik", "320193"], client=edgar)
+        out = capsys.readouterr().out
+        assert "Ingesting" in out
+        assert not out.lstrip().startswith("{")
+
+
 class TestStatusCommand:
     def test_reports_an_empty_store(self, data_dir, capsys):
         assert main(["status"]) == 0
