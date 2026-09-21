@@ -117,6 +117,12 @@ an agent is not a control. This paragraph cannot stop a bad push. Branch protect
 - Accession numbers are stored in dashed form (`0000320193-24-000123`).
 - Tests never touch the live SEC. Anything network-bound is tested against a fake transport;
   the handful of live tests are marked `@pytest.mark.network` and deselected by default.
+- **Never monkeypatch `os.open` to raise `PermissionError` globally in a test.** On Windows,
+  `tempfile._mkstemp_inner` reads that error as "a directory of this name already exists"
+  and retries `TMP_MAX` times, stat-ing the filesystem twice per attempt; on Linux the same
+  branch re-raises at once. A test that passes in a second locally then hangs for minutes on
+  the Windows leg alone. Inject the failure at a narrower seam — `tempfile.mkstemp`,
+  `os.replace` — instead.
 
 ## Scope discipline
 

@@ -203,7 +203,10 @@ class TestWriteDurablyAcrossPlatforms:
         real_open = os.open
 
         def refuse_directories(path, flags, *args, **kwargs):
-            if Path(path).is_dir():
+            # Only directory opens are refused. mkstemp opens a file that does not
+            # exist yet, so it is unaffected — which matters, because a PermissionError
+            # reaching mkstemp sends it into a TMP_MAX-long retry loop on Windows.
+            if isinstance(path, (str, bytes, os.PathLike)) and Path(os.fsdecode(path)).is_dir():
                 raise PermissionError(13, "Permission denied")  # what Windows raises
             return real_open(path, flags, *args, **kwargs)
 
@@ -214,15 +217,43 @@ class TestWriteDurablyAcrossPlatforms:
         assert dest.read_text(encoding="utf-8") == '{"findings": []}'
 
     def test_still_reports_a_genuine_write_failure(self, tmp_path, monkeypatch):
-        """Tolerating the directory fsync must not swallow a real failure to write."""
+        """Tolerating the directory fsync must not swallow a real failure to write.
+
+        The failure is injected at mkstemp rather than by refusing os.open globally.
+        A global refusal looks tidier but is a trap: tempfile treats PermissionError
+        as "a directory of that name exists" and retries TMP_MAX times on Windows,
+        which turns a fast test into a multi-minute hang on that platform alone.
+        """
+        import tempfile
+
+        def no_space(*args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(tempfile, "mkstemp", no_space)
+
+        dest = tmp_path / "out" / "result.json"
+        with pytest.raises(OSError):
+            write_durably(dest, "{}")
+
+        assert not dest.exists()
+
+    def test_leaves_nothing_behind_when_the_rename_fails(self, tmp_path, monkeypatch):
+        """The output is written to a temp file and renamed into place. If the rename
+        fails, neither a partial output nor an orphaned temp file may survive — a
+        half-written file that looked complete would be worse than no file at all."""
         import os
 
-        def refuse_everything(path, flags, *args, **kwargs):
-            raise PermissionError(13, "Permission denied")
+        def fail_rename(*args, **kwargs):
+            raise OSError(28, "No space left on device")
 
-        monkeypatch.setattr(os, "open", refuse_everything)
+        monkeypatch.setattr(os, "replace", fail_rename)
+
+        dest = tmp_path / "out" / "result.json"
         with pytest.raises(OSError):
-            write_durably(tmp_path / "out" / "result.json", "{}")
+            write_durably(dest, '{"findings": ["a", "b"]}')
+
+        assert not dest.exists()
+        assert list((tmp_path / "out").iterdir()) == []
 
 
 class TestResume:
