@@ -7,10 +7,11 @@ stops being retried.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
-from dossier.jobs import MAX_ATTEMPTS, JobQueue, idempotency_key
+from dossier.jobs import MAX_ATTEMPTS, JobQueue, idempotency_key, write_durably
 from dossier.store import open_store
 
 
@@ -187,6 +188,41 @@ class TestWriteThenMark:
         assert queue.get(job.job_id).finished_at is None
         claimed = queue.claim()
         assert queue.get(claimed.job_id).finished_at is None
+
+
+class TestWriteDurablyAcrossPlatforms:
+    """`write_durably` fsyncs the containing directory so the rename survives a power
+    loss. Windows will not open a directory as a file descriptor at all, and that
+    refusal must not fail the write: the rename is already atomic there, so the
+    directory fsync is a durability nicety rather than a step worth losing work over.
+    """
+
+    def test_survives_a_platform_that_refuses_to_open_a_directory(self, tmp_path, monkeypatch):
+        import os
+
+        real_open = os.open
+
+        def refuse_directories(path, flags, *args, **kwargs):
+            if Path(path).is_dir():
+                raise PermissionError(13, "Permission denied")  # what Windows raises
+            return real_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", refuse_directories)
+
+        dest = tmp_path / "out" / "pass_a" / "result.json"
+        write_durably(dest, '{"findings": []}')
+        assert dest.read_text(encoding="utf-8") == '{"findings": []}'
+
+    def test_still_reports_a_genuine_write_failure(self, tmp_path, monkeypatch):
+        """Tolerating the directory fsync must not swallow a real failure to write."""
+        import os
+
+        def refuse_everything(path, flags, *args, **kwargs):
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(os, "open", refuse_everything)
+        with pytest.raises(OSError):
+            write_durably(tmp_path / "out" / "result.json", "{}")
 
 
 class TestResume:

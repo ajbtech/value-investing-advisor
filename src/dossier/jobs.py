@@ -71,12 +71,16 @@ def write_durably(path: Path, payload: str | bytes) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+    except OSError:
+        # Windows refuses to open a directory as a file descriptor at all, raising
+        # PermissionError. The rename above is already atomic there, so the directory
+        # fsync is a durability nicety — not a step worth failing the write over.
+        return
     try:
         os.fsync(dir_fd)
     except OSError:
-        # Directory fsync is not available on every platform (notably Windows); the
-        # rename is still atomic there, so this is a durability nicety, not a rule.
         pass
     finally:
         os.close(dir_fd)
