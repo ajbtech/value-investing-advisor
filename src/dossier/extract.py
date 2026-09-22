@@ -45,11 +45,14 @@ PLAUSIBLE_LENGTH = {
 }
 DEFAULT_PLAUSIBLE = 500
 
-#: What normally follows each item. Ending anywhere else still works, but is less certain.
+#: What normally follows each item. Ending anywhere else still works, but is less
+#: certain. Item 1B can end at either value: the SEC added Item 1C (Cybersecurity) to
+#: Part I in 2023, so a filer using either the old or the new shape is filing normally,
+#: not producing a doubtful parse.
 EXPECTED_SUCCESSOR = {
     "1": "1A",
     "1A": "1B",
-    "1B": "2",
+    "1B": ("1C", "2"),
     "2": "3",
     "7": "7A",
     "7A": "8",
@@ -58,6 +61,15 @@ EXPECTED_SUCCESSOR = {
 _SCRIPT_OR_STYLE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _BLOCK = re.compile(r"</?(p|div|tr|br|h[1-6]|li|table|thead|tbody)\b[^>]*>", re.IGNORECASE)
 _TAG = re.compile(r"<[^>]+>")
+
+#: A running page footer -- "Company Name | YYYY Form 10-K | N" -- sits at the bottom
+#: of every page and is sometimes trailed by a "Table of Contents" line left over from
+#: the page-jump link. Left in, both read as body prose rather than the page furniture
+#: they are.
+_PAGE_FOOTER = re.compile(
+    r"^[^\n|]{1,80}\|\s*\d{4}\s+Form\s+10-K\s*\|\s*\d+[ \t]*\n(?:[ \t]*Table of Contents[ \t]*\n)?",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 #: A heading: "Item 1A.", "ITEM 1A —", "Item 1A:" at the start of a line. The separator
 #: is optional because plenty of filers omit it.
@@ -94,6 +106,11 @@ def normalise(raw_html: str) -> str:
     text = text.replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
+    text = re.sub(r"\n{2,}", "\n", text)
+    # Collapsing blank lines first puts the footer and its trailing "Table of
+    # Contents" line on two adjacent lines, however many paragraph breaks separated
+    # them in the source markup, so the pattern below can match reliably.
+    text = _PAGE_FOOTER.sub("\n", text)
     return re.sub(r"\n{2,}", "\n", text).strip()
 
 
@@ -133,9 +150,11 @@ def _score(item: str, length: int, ended_at: str | None) -> float:
         # Scales down smoothly rather than cliff-edging, so a slightly short section is
         # merely less trusted and a two-line one is barely trusted at all.
         confidence *= max(0.15, length / plausible)
+    expected = EXPECTED_SUCCESSOR.get(item)
+    accepted = expected if isinstance(expected, tuple) else (expected,)
     if ended_at is None:
         confidence *= 0.6  # ran to the end of the filing; we never saw a boundary
-    elif ended_at != EXPECTED_SUCCESSOR.get(item):
+    elif ended_at not in accepted:
         confidence *= 0.8
     return round(min(1.0, confidence), 3)
 
