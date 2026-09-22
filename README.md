@@ -47,6 +47,9 @@ export EDGAR_USER_AGENT="Jane Doe jane@example.com"   # PowerShell: $env:EDGAR_U
 
 uv run dossier ingest --cik 320193     # one filer
 uv run dossier ingest --limit 500      # the first 500 filers in the ticker map
+uv run dossier prices --all            # daily closes for every ingested filer
+uv run dossier screen                  # the five screens, as of today
+uv run dossier screen --as-of 2025-06-30   # ...or as they would have read on any date
 uv run dossier status                  # what is in the store, and what work is pending
 uv run dossier resume                  # retry whatever failed or was interrupted
 ```

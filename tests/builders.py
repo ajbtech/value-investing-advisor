@@ -7,6 +7,7 @@ same as-of rules as real data.
 
 from __future__ import annotations
 
+import itertools
 from datetime import date, timedelta
 
 #: Balance-sheet (point-in-time) tags. Everything else is a flow over the fiscal year.
@@ -48,14 +49,16 @@ SHARE_TAGS = frozenset(
 )
 
 
+#: Shared by every builder, so two builders on one store never reuse an accession.
+_ACCESSIONS = itertools.count(1)
+
+
 class StoreBuilder:
     def __init__(self, conn):
         self.conn = conn
-        self._seq = 0
 
     def _accession(self, cik: int) -> str:
-        self._seq += 1
-        return f"{cik:010d}-00-{self._seq:06d}"
+        return f"{cik:010d}-00-{next(_ACCESSIONS):06d}"
 
     def filer(
         self,

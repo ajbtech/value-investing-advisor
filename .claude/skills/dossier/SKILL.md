@@ -52,13 +52,18 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier extract --cik N --json` | Pull Item sections out of that filer's 10-Ks. |
 | `dossier extract --accession A --json` | Extract one named filing. |
 | `dossier extract ... --force --json` | Re-extract filings already done. |
+| `dossier prices --cik N --json` | Fetch daily closes for an ingested filer. Repeatable. |
+| `dossier prices --all --json` | Price every ingested filer that has a ticker. |
+| `dossier screen --as-of YYYY-MM-DD --json` | Run the five screens with only what was knowable on that date. |
+| `dossier screen ... --out candidates.json` | Also write the candidate array alone: the analysis layer's input. |
 | `dossier analyze --pass a --cik N --prepare` | Write Pass A's input: the prompt and both Item 1A sections. |
 | `dossier analyze --pass a --cik N --load F` | Read findings back, validate every quote, store what survives. |
 | `dossier status --json` | What the store holds and what work is pending. |
 | `dossier resume --json` | Retry everything pending or failed. |
 
-`extract` needs filings already ingested — stages talk through the store, never by
-calling each other, so `ingest` comes first.
+`extract` and `prices` need filers already ingested — stages talk through the store,
+never by calling each other, so `ingest` comes first. `screen` needs both facts and
+prices: a filer with no close within ten days of the as-of date cannot be screened.
 
 Run them with `uv run dossier ...` so the project's own environment is used.
 
@@ -81,6 +86,33 @@ no-op to apologise for — it means the work was already done and correctly skip
 - `extracted` with a low `lowest_confidence` — the parse succeeded but something about
   it is doubtful. Check `extraction_confidence`, `heading` and `ended_at` on the
   `document_section` row before using that section for anything.
+
+`prices` returns one result per filer with a `status` of `fetched`, `cached` (already
+fetched today), `no_ticker`, `not_ingested` or `failed`. Prices come from Yahoo's
+keyless chart endpoint, which is unofficial: a `failed` result naming "delisted" or
+"No data found" usually means the ticker no longer trades there.
+
+`screen` returns the whole run:
+
+- `universe` — how many filers were in the as-of universe, how many were `eligible`,
+  and `excluded` counted by reason (no recent 10-K, financial track, under five years of
+  history, no recent price, no share count, under the $300M floor).
+- `screens` — for each of the five, how many filers it could rank and how many it
+  flagged.
+- `candidates` — each with `flagged_by` (screen, `rank`, `ranked` out of how many, and
+  the metrics), a `flag_reason`, the `price` and `shares` used for market cap with their
+  sources, and `inputs`: every reported fact behind the ratios with its `accession_no`
+  and `filed_date`.
+
+**Read `rank` against `ranked`.** Magic Formula and owner earnings flag their top ten
+*relative to whatever else is in the store*. "Rank 1 of 1" in a store holding one
+filer means nothing; say so rather than presenting it as a finding. Piotroski, net-net
+and quality-at-price flag on absolute thresholds, so their flags hold in any universe.
+
+When presenting a candidate, cite the inputs behind any figure you quote: the
+accession number and filing, as for any other claim. The screens never blend into one
+score, and neither should a summary of them — which screen surfaced a company is the
+first thing that matters about it.
 
 **Extraction confidence is not decoration.** 10-K item boundaries are inconsistent, and
 a bad parse looks exactly like a good one until you read it. Anything below about 0.6 on
@@ -118,6 +150,16 @@ and any resumable jobs. If `resumable` is above zero, say so and offer to resume
 **"Ingest Apple"** — CIKs are what the CLI takes, not tickers. Apple is 320193. If the
 user gives a ticker you are not certain of, ingest by CIK only once you have confirmed
 it; do not guess a CIK.
+
+**"What's cheap right now?" / "Run the screens"** — `dossier screen --json` (as of
+today) after `ingest` and `prices` have run. Report the universe size and exclusions
+first, then each candidate's `flag_reason`, citing inputs for any number you repeat.
+Never present a candidate as something to buy: it is a company worth reading about,
+which is what the analysis passes are for.
+
+**"What would the screens have said last year?"** — `dossier screen --as-of
+YYYY-MM-DD --json`. Everything is filtered to what was knowable on that date, prices
+included.
 
 **"Something died halfway"** — `dossier resume --json`. The job table makes this safe:
 work already completed is skipped, and an interrupted job loses at most one filer.

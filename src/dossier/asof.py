@@ -168,6 +168,24 @@ class AsOfView:
         ).fetchone()
         return Price.from_row(row) if row else None
 
+    def fingerprint(self) -> dict[str, int]:
+        """How much of the store was visible as of this date.
+
+        Rows are only ever added, never edited, so matching counts mean the same as-of
+        state. Ingesting a new filer adds rows dated long before today, which is why a
+        screen run is keyed on this and not on the date alone.
+        """
+
+        def count(sql: str, *params) -> int:
+            return self.conn.execute(sql, params).fetchone()[0]
+
+        return {
+            "facts": count("SELECT COUNT(*) FROM fact WHERE filed_date <= ?", self._as_of),
+            "prices": count("SELECT COUNT(*) FROM price WHERE price_date <= ?", self._as_of),
+            "filings": count("SELECT COUNT(*) FROM filing WHERE filed_date <= ?", self._as_of),
+            "filers": len(self.universe()),
+        }
+
     # -- materialised state, for SQL ----------------------------------------
 
     def materialise(self) -> None:

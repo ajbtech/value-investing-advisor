@@ -17,8 +17,10 @@ date: the gateway is still the only code that reads `fact` or `price`.
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from datetime import date
+from collections import Counter
+from datetime import UTC, date, datetime
 
 from dossier.asof import AsOfView
 
@@ -480,3 +482,186 @@ def screen_rows(conn: sqlite3.Connection, screen: str) -> list[sqlite3.Row]:
 
 def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return screen_rows(conn, "piotroski")
+
+
+# -- the output contract ------------------------------------------------------------
+
+#: Bumped when any screen's arithmetic changes. Part of the screen job's key, so a fixed
+#: screen re-runs rather than serving the old answer from cache.
+SCREENER_VERSION = "1"
+
+#: The plan asks for roughly thirty: enough to be worth analysing, few enough to afford.
+CANDIDATE_LIMIT = 30
+
+LABELS = {
+    "magic_formula": "Magic Formula",
+    "piotroski": "Piotroski",
+    "net_net": "Net-net",
+    "owner_earnings": "Owner earnings yield",
+    "quality_at_price": "Quality at price",
+}
+
+#: The figures each screen reports about a filer it flagged.
+_METRICS = {
+    "magic_formula": ["ebit", "enterprise_value", "earnings_yield", "return_on_capital"],
+    "piotroski": ["score", "tests_scored", "roa", "roa_1", *_PIOTROSKI_TESTS],
+    "net_net": ["net_current_assets", "price_to_ncav"],
+    "owner_earnings": [
+        "cfo",
+        "maintenance_capex",
+        "owner_earnings",
+        "enterprise_value",
+        "owner_earnings_yield",
+    ],
+    "quality_at_price": ["years_counted", "min_roic", "free_cash_flow", "fcf_yield"],
+}
+
+
+def _reason(screen: str, row: sqlite3.Row, ranked: int) -> str:
+    label = LABELS[screen]
+    if screen == "magic_formula":
+        return (
+            f"{label} rank {row['rank']} of {ranked}: earnings yield "
+            f"{row['earnings_yield']:.1%}, return on capital {row['return_on_capital']:.0%}"
+        )
+    if screen == "piotroski":
+        return f"{label} {row['score']}/9, rank {row['rank']} of {ranked}"
+    if screen == "net_net":
+        return f"{label}: market cap {row['price_to_ncav']:.2f}x net current assets"
+    if screen == "owner_earnings":
+        return f"{label} {row['owner_earnings_yield']:.1%}, rank {row['rank']} of {ranked}"
+    return (
+        f"{label}: ROIC at least {row['min_roic']:.0%} in each of {QUALITY_YEARS} years, "
+        f"FCF yield {row['fcf_yield']:.1%}"
+    )
+
+
+def _inputs(conn: sqlite3.Connection, cik: int, years: int) -> list[dict]:
+    """The reported facts behind a candidate's ratios, each with its source filing."""
+    fy_ends = [
+        row["fy_end"]
+        for row in conn.execute(
+            "SELECT fy_end FROM annual WHERE cik = ? ORDER BY fy_end DESC LIMIT ?", (cik, years)
+        )
+    ]
+    if not fy_ends:
+        return []
+    tags = [tag for tag, _ in ANNUAL_TAGS]
+    rows = conn.execute(
+        f"""
+        SELECT tag, unit, period_start, period_end, value, filed_date, accession_no
+        FROM fact_asof
+        WHERE cik = ?
+          AND period_end IN ({", ".join("?" for _ in fy_ends)})
+          AND tag IN ({", ".join("?" for _ in tags)})
+          AND (period_start = ''
+               OR julianday(period_end) - julianday(period_start) BETWEEN {_LO} AND {_HI})
+        ORDER BY period_end DESC, tag
+        """,
+        (cik, *fy_ends, *tags),
+    )
+    return [dict(row) for row in rows]
+
+
+def _complete(conn: sqlite3.Connection, candidate: dict, universe: sqlite3.Row) -> dict:
+    cik = candidate["cik"]
+    price = conn.execute(
+        "SELECT close, price_date, source FROM price_asof WHERE cik = ?", (cik,)
+    ).fetchone()
+    screens = {flag["screen"] for flag in candidate["flagged_by"]}
+    years = QUALITY_YEARS if "quality_at_price" in screens else 3
+    return {
+        "cik": cik,
+        "ticker": universe["ticker"],
+        "name": universe["name"],
+        "market_cap": universe["market_cap"],
+        "fiscal_year_end": universe["latest_fy_end"],
+        "price": dict(price) if price else None,
+        "shares": {
+            "value": universe["shares"],
+            "tag": universe["shares_tag"],
+            "period_end": universe["shares_date"],
+            "filed_date": universe["shares_filed"],
+            "accession_no": universe["shares_accession"],
+        },
+        "flagged_by": candidate["flagged_by"],
+        "flag_reason": "; ".join(flag["reason"] for flag in candidate["flagged_by"]),
+        "inputs": _inputs(conn, cik, years),
+    }
+
+
+def build_candidates(
+    conn: sqlite3.Connection, as_of: date | str, limit: int = CANDIDATE_LIMIT
+) -> dict:
+    """Run all five screens as of a date and assemble the candidate list.
+
+    A filer flagged by several screens is one candidate listing each. Candidates are
+    ordered by how many screens flagged them, then by their best rank, and the screens
+    are never blended into one score: which screen surfaced a company is the first
+    thing the analysis layer needs to know.
+    """
+    view = prepare(conn, as_of)
+    universe = universe_rows(conn)
+    excluded = Counter(row["excluded_because"] for row in universe if row["excluded_because"])
+
+    found: dict[int, dict] = {}
+    summary = {}
+    for screen, description in SCREENS.items():
+        rows = screen_rows(conn, screen)
+        ranked = sum(1 for row in rows if row["rank"] is not None)
+        flagged = [row for row in rows if row["flagged"]]
+        summary[screen] = {"description": description, "ranked": ranked, "flagged": len(flagged)}
+        for row in flagged:
+            entry = found.setdefault(row["cik"], {"cik": row["cik"], "flagged_by": []})
+            entry["flagged_by"].append(
+                {
+                    "screen": screen,
+                    "label": LABELS[screen],
+                    "rank": row["rank"],
+                    "ranked": ranked,
+                    "fiscal_year_end": row["fy_end"],
+                    "metrics": {name: row[name] for name in _METRICS[screen]},
+                    "reason": _reason(screen, row, ranked),
+                }
+            )
+
+    ordered = sorted(
+        found.values(),
+        key=lambda c: (-len(c["flagged_by"]), min(f["rank"] for f in c["flagged_by"]), c["cik"]),
+    )[:limit]
+    by_cik = {row["cik"]: row for row in universe}
+    return {
+        "as_of": view.as_of.isoformat(),
+        "screener_version": SCREENER_VERSION,
+        "universe": {
+            "filers": len(universe),
+            "eligible": len(universe) - sum(excluded.values()),
+            "excluded": dict(excluded),
+        },
+        "screens": summary,
+        "candidates": [_complete(conn, c, by_cik[c["cik"]]) for c in ordered],
+    }
+
+
+def store_candidates(conn: sqlite3.Connection, run: dict) -> int:
+    """Replace the candidate rows for this run's date with this run's list."""
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    with conn:
+        conn.execute("DELETE FROM candidate WHERE as_of = ?", (run["as_of"],))
+        conn.executemany(
+            "INSERT INTO candidate (as_of, cik, screener_version, screens, flag_reason, "
+            "payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    run["as_of"],
+                    c["cik"],
+                    run["screener_version"],
+                    ",".join(f["screen"] for f in c["flagged_by"]),
+                    c["flag_reason"],
+                    json.dumps(c),
+                    now,
+                )
+                for c in run["candidates"]
+            ],
+        )
+    return len(run["candidates"])

@@ -19,13 +19,19 @@ from pathlib import Path
 
 from dossier import __version__
 from dossier.analysis import PASS_A_VERSION, load_findings, prepare_pass_a
-from dossier.asof import fact_count
+from dossier.asof import AsOfView, fact_count
 from dossier.config import Config
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
 from dossier.extract import EXTRACTOR_VERSION, extract_filing
 from dossier.ingest import INGEST_VERSION, ingest_filer
 from dossier.jobs import JobQueue, idempotency_key
 from dossier.prices import YahooPrices, store_prices
+from dossier.screens import (
+    CANDIDATE_LIMIT,
+    SCREENER_VERSION,
+    build_candidates,
+    store_candidates,
+)
 from dossier.store import open_store
 
 #: How far back `dossier prices` fetches by default: enough for the screens to run as of
@@ -106,6 +112,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="earliest date to fetch (default: three years ago)",
     )
 
+    screen = subcommands.add_parser(
+        "screen",
+        parents=[common],
+        help="run the five screens as of a date and list the candidates",
+    )
+    screen.add_argument(
+        "--as-of",
+        type=date.fromisoformat,
+        metavar="YYYY-MM-DD",
+        help="screen with only what was knowable on this date (default: today)",
+    )
+    screen.add_argument(
+        "--limit",
+        type=int,
+        default=CANDIDATE_LIMIT,
+        help=f"most candidates to list (default: {CANDIDATE_LIMIT})",
+    )
+    screen.add_argument(
+        "--out",
+        metavar="FILE",
+        help="write the candidate array here: the analysis layer's only input",
+    )
+
     analyze = subcommands.add_parser(
         "analyze",
         parents=[common],
@@ -157,6 +186,8 @@ def main(
             return _extract(args, config, client)
         if args.command == "prices":
             return _prices(args, config, prices)
+        if args.command == "screen":
+            return _screen(args, config)
         if args.command == "analyze":
             return _analyze(args, config)
         if args.command == "status":
@@ -475,6 +506,66 @@ def _prices(args, config: Config, source: YahooPrices | None) -> int:
             }
         )
     return 1 if failures else 0
+
+
+def _screen(args, config: Config) -> int:
+    """Screen as of a date, as one job.
+
+    The job is keyed on the date *and* on how much of the store was visible by then:
+    ingesting another filer changes the answer for a date already screened.
+    """
+    as_of = args.as_of or date.today()
+    with open_store(config.store_path) as conn:
+        queue = JobQueue(conn, output_dir=config.output_dir)
+        inputs = {
+            "as_of": as_of.isoformat(),
+            "limit": args.limit,
+            "fingerprint": AsOfView(conn, as_of).fingerprint(),
+        }
+        key = idempotency_key("screen", inputs, prompt_version=SCREENER_VERSION)
+        cached = queue.completed(key)
+        if cached is not None:
+            run = json.loads(cached.read_output())
+            store_candidates(conn, run)
+            status = "cached"
+        else:
+            queue.enqueue("screen", inputs, prompt_version=SCREENER_VERSION)
+            claimed = queue.claim_by_key(key)
+            if claimed is None:
+                print("dossier screen: this run has failed too many times", file=sys.stderr)
+                return 1
+            try:
+                run = build_candidates(conn, as_of, limit=args.limit)
+                store_candidates(conn, run)
+            except Exception as exc:
+                queue.fail(claimed, f"{type(exc).__name__}: {exc}")
+                print(f"dossier screen: {type(exc).__name__}: {exc}", file=sys.stderr)
+                return 1
+            queue.finish(claimed, json.dumps(run, default=str))
+            status = "screened"
+
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps(run["candidates"], indent=2, default=str), encoding="utf-8"
+        )
+    if args.as_json:
+        _emit({"command": "screen", "status": status, **run})
+        return 0
+
+    universe = run["universe"]
+    print(
+        f"Screened as of {run['as_of']} ({status}): "
+        f"{universe['eligible']} of {universe['filers']} filers eligible"
+    )
+    for reason, count in sorted(universe["excluded"].items(), key=lambda item: -item[1]):
+        print(f"  excluded, {reason}: {count}")
+    for screen, counts in run["screens"].items():
+        print(f"  {screen}: {counts['flagged']} flagged of {counts['ranked']} ranked")
+    if run["candidates"]:
+        print("Candidates:")
+    for candidate in run["candidates"]:
+        print(f"  {candidate['ticker'] or candidate['cik']}: {candidate['flag_reason']}")
+    return 0
 
 
 def _analyze(args, config: Config) -> int:

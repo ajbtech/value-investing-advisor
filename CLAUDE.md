@@ -26,6 +26,14 @@ uncommitted step.
 - **`filed_date <= as_of`, through one function.** Every read of the `fact` table goes
   through the single as-of gateway. There is no other read path. A test asserts that a known
   filing is invisible the day before it was filed, and it runs in CI.
+- **`price_date <= as_of`, through the same gateway.** Prices carry the same lookahead
+  risk as facts, and a second structural test keeps every read of `price` in
+  `dossier.asof`. Stored closes are the price as traded that day: free sources adjust
+  history for splits that happened later, and `dossier.prices` undoes that before
+  anything is written.
+- **Screens read materialised as-of tables, never `fact` or `price`.**
+  `AsOfView.materialise()` writes what was knowable on the date into TEMP tables, and
+  the screen views in `dossier.screens` read only those.
 - **Never update a fact row in place.** `companyfacts` returns today's restated figures.
   Keep every version of every fact, keyed by the accession number that reported it.
   Restatements are systematically biased; overwriting them silently breaks any backtest.
@@ -117,7 +125,8 @@ store — never by importing each other.
 | --- | --- | --- |
 | `dossier ingest` | EDGAR | `filer` + `filing` + `fact` |
 | `dossier extract` | `filing` | `document_section` |
-| `dossier screen` | `fact` | `candidate` |
+| `dossier prices` | Yahoo chart endpoint | `price` |
+| `dossier screen` | `fact` + `price` | `candidate` |
 | `dossier analyze --pass a --cik N` | `document_section` | `finding` |
 | `dossier value --cik N` | `fact` + `finding` | `valuation` |
 | `dossier serve` | everything | nothing |
@@ -186,6 +195,10 @@ Out of scope, deliberately and permanently: price-series signals, technical indi
 momentum, autonomous order placement, any prediction over days or weeks, and position sizing
 by an LLM. Requests for alerts, watchlists, charts or real-time data pull this toward the
 trading bot the design exists to avoid.
+
+The `price` table does not change this. A close exists to turn a share count into a market
+cap on the as-of date, and for nothing else. Nothing here reads a price's movement, and a
+feature that would is out of scope for the reasons above.
 
 This is a research tool, not investment advice, and it makes no individualized
 recommendations. Publishing the repository does not make it a product, and nothing here
