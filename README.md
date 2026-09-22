@@ -10,6 +10,10 @@ would, and ends at a written, falsifiable thesis. A human places the order, or d
 individualized recommendations. Nothing it produces is a recommendation to buy or sell
 anything.
 
+**This repository is public; the tool is personal.** It is built for one person on their
+own machine. You are welcome to read it or fork it, but it is not packaged for general
+use, is not offered as a service, and comes with no support.
+
 ## Status
 
 Early. Milestone 1 of 10 — the point-in-time data layer — is in place:
@@ -60,6 +64,11 @@ Data lives outside this checkout, in your per-user data directory
 The CLI is the machine interface; the intended way to use this day to day is to ask
 Claude, which runs the commands and presents the results. `.claude/skills/dossier/`
 teaches a Claude Code session how.
+
+The analysis passes run through that same Claude Code session, on an existing Claude
+subscription — **there is no API key in this project**, which is deliberate: a key that
+does not exist cannot be published. `dossier.models` keeps an API path for work that has
+to run unattended, and it needs no key until you use it.
 
 One caveat worth stating plainly: the pipeline validates every quoted claim against its
 source filing before it enters a dossier, but that validation protects the *dossier*,

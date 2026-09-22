@@ -49,8 +49,16 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier ingest --cik N --json` | Fetch one filer from EDGAR into the store. Repeatable. |
 | `dossier ingest --limit N --json` | Fetch the first N filers from the ticker map. |
 | `dossier ingest ... --force --json` | Re-run filers already ingested. |
+| `dossier extract --cik N --json` | Pull Item sections out of that filer's 10-Ks. |
+| `dossier extract --accession A --json` | Extract one named filing. |
+| `dossier extract ... --force --json` | Re-extract filings already done. |
+| `dossier analyze --pass a --cik N --prepare` | Write Pass A's input: the prompt and both Item 1A sections. |
+| `dossier analyze --pass a --cik N --load F` | Read findings back, validate every quote, store what survives. |
 | `dossier status --json` | What the store holds and what work is pending. |
 | `dossier resume --json` | Retry everything pending or failed. |
+
+`extract` needs filings already ingested — stages talk through the store, never by
+calling each other, so `ingest` comes first.
 
 Run them with `uv run dossier ...` so the project's own environment is used.
 
@@ -63,6 +71,44 @@ configuration problem (the message is on stderr).
 `status` of `ingested`, `cached`, `failed` or `skipped`. A `cached` result is not a
 no-op to apologise for — it means the work was already done and correctly skipped.
 `failed` entries stay resumable; suggest `dossier resume` rather than re-running ingest.
+
+`extract` returns the same shape per filing, plus `items`, `sections` and
+`lowest_confidence`. Two statuses are specific to it:
+
+- `no_document` — a stub filing with no document URL, created during ingest for an
+  accession outside the submissions window. Not a failure, and deliberately not
+  resumable: there is nothing to retry until ingest supplies a URL.
+- `extracted` with a low `lowest_confidence` — the parse succeeded but something about
+  it is doubtful. Check `extraction_confidence`, `heading` and `ended_at` on the
+  `document_section` row before using that section for anything.
+
+**Extraction confidence is not decoration.** 10-K item boundaries are inconsistent, and
+a bad parse looks exactly like a good one until you read it. Anything below about 0.6 on
+Item 1A should be looked at rather than analysed. Confidence is scored per item, so a
+five-character Item 1B is fine — "None." is what most filings say — while a
+five-hundred-character Item 1A is not.
+
+## Running Pass A — you are the model
+
+There is no API key. Pass A runs in two halves with you in the middle:
+
+1. `dossier analyze --pass a --cik N --prepare --out input.json` — this hands you the
+   prompt and both Item 1A sections.
+2. **Follow that prompt exactly.** Read both sections, report what changed, and quote
+   verbatim from the filing each finding describes. Write the findings to a file in the
+   shape the prompt specifies.
+3. `dossier analyze --pass a --cik N --load findings.json` — every quote is
+   string-matched against its source filing. Anything that does not match is dropped.
+
+**Expect to be caught, and do not work around it.** If a finding is dropped as
+`quote_not_found`, the quote was not in the filing — re-read and quote exactly, rather
+than loosening the quote until it passes. The exit code is 1 when anything was dropped,
+and the fabrication rate is reported; that number is the point of the whole design.
+Report it to the user honestly, including when it is bad.
+
+Never write a finding that recommends buying or selling. The loader rejects those, but
+the reason they are rejected matters more than the check: these passes report
+observations, and judgment happens later once all four are in view.
 
 ## Workflows
 

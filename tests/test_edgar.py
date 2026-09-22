@@ -52,8 +52,8 @@ class TestUserAgent:
         "user_agent",
         [
             "Jane Doe jane@example.com",
-            "Acme Research contact@acme.co.uk",
-            "A B a.b+edgar@sub.domain.org",
+            "Acme Research contact@research.example.com",
+            "A B a.b+edgar@sub.example.org",
         ],
     )
     def test_accepts_a_name_and_an_email(self, user_agent):
