@@ -137,6 +137,29 @@ class TestIngestCommand:
         main(["ingest", "--cik", "320193"], client=edgar)
         assert "cached" in capsys.readouterr().out.lower()
 
+    def test_a_filer_with_no_xbrl_facts_is_ingested_not_failed(self, data_dir, capsys):
+        """A failed job sits in the resume queue retrying something that cannot succeed.
+        A filer with no XBRL facts is ingested with none, and the screens' universe then
+        excludes it for too little history, with that reason on the record."""
+        from dossier.edgar import EdgarClient
+
+        submissions = (FIXTURES / "submissions_CIK0000320193.json").read_text()
+
+        def handler(request):
+            if "/submissions/" in str(request.url):
+                return httpx.Response(
+                    200, text=submissions, headers={"content-type": "application/json"}
+                )
+            return httpx.Response(404)
+
+        client = EdgarClient(VALID_UA, transport=httpx.MockTransport(handler), sleep=lambda _: None)
+        assert main(["ingest", "--cik", "320193", "--json"], client=client) == 0
+        result = json.loads(capsys.readouterr().out)["results"][0]
+        assert result["status"] == "ingested"
+        assert result["facts"] == 0
+        with open_store(data_dir / "edgar.sqlite") as conn:
+            assert conn.execute("SELECT status FROM job").fetchone()["status"] == "done"
+
     def test_widening_the_tag_set_re_runs_instead_of_serving_the_cache(
         self, data_dir, edgar, capsys, monkeypatch
     ):

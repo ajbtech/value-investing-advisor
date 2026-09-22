@@ -210,9 +210,19 @@ class EdgarClient:
         """EDGAR wants CIKs zero-padded to ten digits in its JSON endpoints."""
         return f"CIK{int(cik):010d}"
 
-    def company_facts(self, cik: int) -> dict:
-        """Every XBRL fact for one filer. Prefer the bulk ZIP for more than a handful."""
-        return self.get_json(f"{DATA}/api/xbrl/companyfacts/{self.cik_str(cik)}.json")
+    def company_facts(self, cik: int) -> dict | None:
+        """Every XBRL fact for one filer, or None if it has filed none.
+
+        EDGAR answers 404 for a registrant with no XBRL financials, which many trusts,
+        funds and pre-XBRL filers are. That is a fact about the filer rather than a
+        failed request, so it is not raised. Prefer the bulk ZIP for more than a handful.
+        """
+        try:
+            return self.get_json(f"{DATA}/api/xbrl/companyfacts/{self.cik_str(cik)}.json")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
 
     def submissions(self, cik: int) -> dict:
         """One filer's filing index: dates, accession numbers, forms."""
