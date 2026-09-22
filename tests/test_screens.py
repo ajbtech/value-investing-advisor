@@ -206,6 +206,61 @@ class TestUniverse:
         prepare(store, AS_OF)
         assert "$300M" in by_cik(universe_rows(store))[1]["excluded_because"]
 
+    def test_a_stale_cover_page_count_gives_way_to_the_weighted_average(self, store):
+        """Found live: A. O. Smith's last single cover-page count is from 2015. Since then
+        it has reported per share class, which company facts leave out."""
+        b = StoreBuilder(store)
+        b.filer(1)
+        b.history(1, [2019, 2020, 2021, 2022, 2023, 2024], **HEALTHY)
+        b.shares(1, 40_000_000, "2015-08-05", "2015-08-10")
+        b.price(1, "2025-06-27", 20.0)
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(universe_rows(store))[1]
+        assert row["shares_tag"] == "WeightedAverageNumberOfSharesOutstandingBasic"
+        assert row["market_cap"] == pytest.approx(20.0 * 100_000_000)
+
+    def test_a_count_far_below_the_weighted_average_is_one_class_of_several(self, store):
+        """Found live: HEICO's balance-sheet count covers one of its two classes, 55M of
+        139M. Priced as the whole company it looked five times cheaper than it is."""
+        b = StoreBuilder(store)
+        b.filer(1)
+        b.history(1, [2019, 2020, 2021, 2022, 2023, 2024], **HEALTHY)
+        b.shares(1, 40_000_000, "2025-04-30", "2025-05-05")
+        b.price(1, "2025-06-27", 20.0)
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(universe_rows(store))[1]
+        assert row["shares"] == 100_000_000
+        assert row["shares_tag"] == "WeightedAverageNumberOfSharesOutstandingBasic"
+
+    def test_a_fresh_whole_company_count_is_preferred(self, store):
+        """The cover-page count is the most current, so it wins when it plausibly counts
+        every share: here a 2% buyback since fiscal year end."""
+        b = StoreBuilder(store)
+        b.filer(1)
+        b.history(1, [2019, 2020, 2021, 2022, 2023, 2024], **HEALTHY)
+        b.shares(1, 98_000_000, "2025-04-30", "2025-05-05")
+        b.price(1, "2025-06-27", 20.0)
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(universe_rows(store))[1]
+        assert row["shares"] == 98_000_000
+        assert row["shares_tag"] == "EntityCommonStockSharesOutstanding"
+
+    def test_no_current_count_of_any_kind_is_excluded(self, store):
+        values = {
+            k: v for k, v in HEALTHY.items() if k != "WeightedAverageNumberOfSharesOutstandingBasic"
+        }
+        b = StoreBuilder(store)
+        b.filer(1)
+        b.history(1, [2019, 2020, 2021, 2022, 2023, 2024], **values)
+        b.shares(1, 100_000_000, "2011-07-29", "2011-08-05")
+        b.price(1, "2025-06-27", 20.0)
+        b.done()
+        prepare(store, AS_OF)
+        assert "share count" in by_cik(universe_rows(store))[1]["excluded_because"]
+
     def test_a_filer_that_failed_later_is_still_in_the_universe(self, store):
         """Survivorship: as of mid-2025 this company had not failed yet."""
         b = StoreBuilder(store)

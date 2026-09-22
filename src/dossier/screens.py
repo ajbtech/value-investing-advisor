@@ -35,6 +35,7 @@ FINANCIAL_SIC = (6000, 6799)
 
 #: A duration this long is a fiscal year; 52/53-week years land at 364 or 371 days.
 FISCAL_YEAR_DAYS = (350, 380)
+_LO, _HI = FISCAL_YEAR_DAYS
 
 #: (tag, unit) pairs pivoted into `annual_raw`.
 ANNUAL_TAGS = [
@@ -131,21 +132,74 @@ SELECT cik, fy_end,
 FROM annual_raw
 """
 
-SHARES_SQL = """
+#: A cover-page or balance-sheet share count older than this is not a current count.
+SHARE_COUNT_MAX_AGE_MONTHS = 15
+#: A point-in-time count below this fraction of the year's weighted-average basic shares
+#: is taken to be one class of several, not the whole company.
+WHOLE_COMPANY_RATIO = 0.8
+
+# The share count behind market cap, from two candidates:
+#
+# - the latest point-in-time count (the cover page's EntityCommonStockSharesOutstanding,
+#   or the balance sheet's CommonStockSharesOutstanding), if under 15 months old. It is
+#   the most current figure, so it is preferred.
+# - the latest fiscal year's weighted-average basic shares, the EPS denominator, which
+#   counts every class of common stock.
+#
+# Company facts leave out figures reported per share class. A multi-class filer's
+# point-in-time count can therefore be one class only (HEICO: 55M of 139M), or years
+# out of date (A. O. Smith: 2015). A point-in-time count under 80% of the weighted
+# average is treated as partial and the weighted average used instead. A real buyback
+# of more than a fifth within a year is sized a little high as a result: that errs
+# toward a larger market cap and lower yields, the safer mistake for a screen.
+SHARES_SQL = f"""
 CREATE TEMP VIEW shares_latest AS
-SELECT cik, value AS shares, period_end AS shares_date, tag AS shares_tag,
-       accession_no AS shares_accession, filed_date AS shares_filed
-FROM (
-  SELECT *, ROW_NUMBER() OVER (
-    PARTITION BY cik
-    ORDER BY period_end DESC,
-             CASE tag WHEN 'EntityCommonStockSharesOutstanding' THEN 0 ELSE 1 END
-  ) AS recency
-  FROM fact_asof
-  WHERE unit = 'shares' AND period_start = ''
-    AND tag IN ('EntityCommonStockSharesOutstanding', 'CommonStockSharesOutstanding')
+WITH p AS (SELECT as_of FROM asof_param),
+point_in_time AS (
+  SELECT * FROM (
+    SELECT f.*, ROW_NUMBER() OVER (
+      PARTITION BY f.cik
+      ORDER BY f.period_end DESC,
+               CASE f.tag WHEN 'EntityCommonStockSharesOutstanding' THEN 0 ELSE 1 END
+    ) AS recency
+    FROM fact_asof f CROSS JOIN p
+    WHERE f.unit = 'shares' AND f.period_start = ''
+      AND f.tag IN ('EntityCommonStockSharesOutstanding', 'CommonStockSharesOutstanding')
+      AND f.period_end >= date(p.as_of, '-{SHARE_COUNT_MAX_AGE_MONTHS} months')
+  ) WHERE recency = 1
+),
+weighted AS (
+  SELECT * FROM (
+    SELECT f.*, ROW_NUMBER() OVER (
+      PARTITION BY f.cik
+      ORDER BY f.period_end DESC,
+               CASE f.tag WHEN 'WeightedAverageNumberOfSharesOutstandingBasic' THEN 0 ELSE 1 END
+    ) AS recency
+    FROM fact_asof f
+    WHERE f.unit = 'shares' AND f.period_start <> ''
+      AND julianday(f.period_end) - julianday(f.period_start) BETWEEN {_LO} AND {_HI}
+      AND f.tag IN ('WeightedAverageNumberOfSharesOutstandingBasic',
+                    'WeightedAverageNumberOfDilutedSharesOutstanding')
+  ) WHERE recency = 1
+),
+filers AS (SELECT cik FROM point_in_time UNION SELECT cik FROM weighted),
+chosen AS (
+  SELECT f.cik, i.value AS i_value, w.value AS w_value,
+    i.value IS NOT NULL AND (w.value IS NULL OR i.value >= {WHOLE_COMPANY_RATIO} * w.value)
+      AS use_point_in_time,
+    i.period_end AS i_date, i.tag AS i_tag, i.accession_no AS i_acc, i.filed_date AS i_filed,
+    w.period_end AS w_date, w.tag AS w_tag, w.accession_no AS w_acc, w.filed_date AS w_filed
+  FROM filers f
+  LEFT JOIN point_in_time i ON i.cik = f.cik
+  LEFT JOIN weighted w ON w.cik = f.cik
 )
-WHERE recency = 1
+SELECT cik,
+  CASE WHEN use_point_in_time THEN i_value ELSE w_value END AS shares,
+  CASE WHEN use_point_in_time THEN i_date ELSE w_date END AS shares_date,
+  CASE WHEN use_point_in_time THEN i_tag ELSE w_tag END AS shares_tag,
+  CASE WHEN use_point_in_time THEN i_acc ELSE w_acc END AS shares_accession,
+  CASE WHEN use_point_in_time THEN i_filed ELSE w_filed END AS shares_filed
+FROM chosen
 """
 
 UNIVERSE_SQL = f"""
@@ -193,8 +247,6 @@ FROM base
 
 #: A Piotroski score at or above this is flagged. Piotroski's own "high" portfolio was 8-9.
 PIOTROSKI_FLAG = 8
-
-_LO, _HI = FISCAL_YEAR_DAYS
 _PIOTROSKI_TESTS = [
     "f_roa",
     "f_cfo",
@@ -488,7 +540,7 @@ def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 #: Bumped when any screen's arithmetic changes. Part of the screen job's key, so a fixed
 #: screen re-runs rather than serving the old answer from cache.
-SCREENER_VERSION = "1"
+SCREENER_VERSION = "2"
 
 #: The plan asks for roughly thirty: enough to be worth analysing, few enough to afford.
 CANDIDATE_LIMIT = 30
