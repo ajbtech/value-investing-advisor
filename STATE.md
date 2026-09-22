@@ -8,7 +8,8 @@ The build plan lives outside the repo, as a Claude doc:
 
 ## Current milestone
 
-**Milestone 1 — job table + EDGAR ingest into SQLite, ~500 filers, `filed_date` enforced.**
+**Milestone 4's gate is passed.** Pass A produced 9 real, quote-validated findings
+against real Apple 10-Ks with 0% fabrication. Deciding what's next — see below.
 
 ## Done
 
@@ -38,37 +39,52 @@ reads 383,285,000,000 from the original 10-K on 2023-11-03, and reads the restat
 
 - Nothing. Milestone 1 is a clean stopping point.
 
-## Next concrete step (superseded — see below)
-
-**Milestone 4, not milestone 2.** The plan's own build-order note says to get to Pass A
-(the risk-factor diff) as early as you can stand to, because it is the cheapest test of
-whether the idea works at all. That needs just enough of milestone 2 to extract Item 1A
-from two consecutive 10-Ks for one company you know well — not the full 50-filing
-tested extractor.
-
-So: write the failing test for Item 1A extraction against a committed 10-K fixture,
-make it pass, then wire Pass A over the two extracted sections and read the output. If
-it surfaces something you didn't know about a company you already understand, the
-project is real.
-
-One thing to decide before then: a live ingest has never been run, because this
-environment cannot reach sec.gov. Run `dossier ingest --limit 500` on your own machine
-once to confirm the client behaves against the real SEC.
-
 ## Next concrete step
 
-**Pass A — the risk-factor diff.** The extractor now produces Item 1A from two
-consecutive 10-Ks, which is exactly Pass A's input. What remains: a prompt that takes
-two Item 1A texts and reports what was added, removed, reordered or quietly softened,
-with a verbatim quote and accession number behind every finding, and a validator that
-string-matches each quote against its source before the finding is allowed through.
+**Milestone 4's gate is passed, on a real filer, on a developer machine.** `dossier
+ingest`, `dossier extract` and `dossier analyze` have now all run live against
+sec.gov (CIK 320193, Apple) rather than only against fixtures — see the session notes
+below for what a hand-check of real filings actually turned up, and for the findings
+Pass A produced.
 
-Before trusting any of it: run `dossier extract` against real 10-Ks and hand-check the
-confidence scores. Every fixture in this repo is synthetic, because the sessions that
-built the extractor could not reach `sec.gov`. The fixtures encode the hazards found by
-reasoning about real filings — a table of contents, running page headers, tags splitting
-a heading, a missing Item 1B — but real filings are messier than anything written from
-the outside, and the plan budgets real time for this for good reason.
+**Extraction, hand-checked against 11 real Apple 10-Ks (FY2015–FY2025):** Item 1A's
+boundary detection is solid — correct start/end and 1.0 confidence on every one, even
+though only synthetic fixtures existed when the extractor was written. Two things a
+hand-check caught that the fixtures did not anticipate:
+
+- **A real gap, low severity:** the FY2015 and FY2016 filings leak a running
+  page-footer (`"Apple Inc. | 2015 Form 10-K | 17" / "Table of Contents"`) into the
+  Item 1A body — ten occurrences in FY2015 alone. The fixtures test a repeated
+  *heading* (`Item 1A. Risk Factors (continued)`) but not a bottom-of-page footer, and
+  confidence doesn't catch it because it's a content-noise problem, not a boundary
+  problem. Apple's later HTML doesn't have this pattern, so it hasn't mattered yet,
+  but a filer whose footer noise persists into recent years would still slip through
+  silently.
+- **Confidence doing its job, not a gap:** Item 1B in the FY2023–FY2025 filings scores
+  0.8 because it now ends at Item 1C (Cybersecurity, an item SEC added in 2023) rather
+  than Item 2. `EXPECTED_SUCCESSOR` predates that rule change, so the score correctly
+  flags something worth a look rather than confidently assuming a stale item map.
+
+**Pass A, run for real:** prepared Apple's FY2025-vs-FY2024 Item 1A pair, read both in
+full as the model, and produced 9 findings — **0 dropped, 0% fabrication rate.** Not
+boilerplate: the changes include Apple deleting every explicit "ESG" / "diversity,
+equity and inclusion" / "climate change and greenhouse gas emissions" phrase from its
+stakeholder-expectations risk factor; a dedicated "retail stores" risk factor that no
+longer appears at all; a newly dated 2025 U.S.-tariff disclosure with a live Section
+232 investigation; a newly dated account of the Google antitrust remedy order; a new
+AI-training-data copyright risk; and a softened claim about manufacturing
+concentration ("substantially all... a small number of outsourcing partners, often in
+single locations" → "a significant majority... in addition to sourcing from... the
+U.S."). That is a company-you-know-well result, not confident mush — the gate holds.
+
+**What's actually next:** decide whether Milestone 4's remaining scope (Item 7/MD&A,
+not just Item 1A; more than one company) is worth doing before Milestone 3 (the
+screens), or whether one clean pass on one company is enough proof and it's time to
+move on. Also worth doing at some point, not urgently: fix the running-footer leak in
+`dossier.extract.normalise` (a footer pattern is a normalisable-away thing, the same
+family as script/style stripping) and update `EXPECTED_SUCCESSOR["1B"]` to accept
+`"1C"` without a confidence penalty now that it's a normal, not exceptional, filing
+shape.
 
 ## Outstanding, and only you can do it
 
@@ -95,9 +111,9 @@ public, driven from Claude Code on an existing subscription rather than an API k
 
 | # | Milestone | Status |
 | --- | --- | --- |
-| 1 | Job table + EDGAR ingest → SQLite, `filed_date` enforced | **done** (not yet run live) |
-| 2 | Section extractor for Item 1A / 7 / footnotes | **done in substance** — unvalidated against real filings |
-| 4 | Pass A (risk-factor diff) end to end, one company | **built** — prepare/load flow, unproven on a real filing |
+| 1 | Job table + EDGAR ingest → SQLite, `filed_date` enforced | **done**, run live on Apple (CIK 320193) |
+| 2 | Section extractor for Item 1A / 7 / footnotes | **validated on 11 real Apple 10-Ks** — one known gap, see below |
+| 4 | Pass A (risk-factor diff) end to end, one company | **gate passed** — 9 findings, 0% fabrication, on a real filer |
 | 3 | Five screens as SQL views + JSON output | after Pass A proves out |
 | 8 | Valuation engine with bear/base/bull | not started |
 | 9 | Thesis generator + bear pass + journal | **raised** — compounds for a single user |

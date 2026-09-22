@@ -164,6 +164,37 @@ class TestConfidence:
         assert with_toc["1A"].ended_at == "1B"
 
 
+class TestPageFooters:
+    """SEC HTML repeats a running page footer -- "Company | YYYY Form 10-K | N",
+    often followed by a stray "Table of Contents" line from the page-jump link -- at
+    the bottom of every page. Left in, it reads as part of the risk-factor prose
+    rather than the page furniture it actually is."""
+
+    def test_strips_a_running_page_footer(self):
+        text = extract_sections(filing("tenk_page_footer"))["1A"].text
+        assert "SENTINEL_1A_START" in text
+        assert "SENTINEL_1A_END" in text
+        assert "Form 10-K" not in text
+        assert "Table of Contents" not in text
+
+    def test_does_not_join_the_words_either_side_of_the_footer(self):
+        """Stripping the footer must not glue "markets." to "We depend" -- the
+        sentence boundary the footer interrupted has to survive its removal."""
+        text = extract_sections(filing("tenk_page_footer"))["1A"].text
+        assert "marketsWe depend" not in text
+
+
+class TestItemNumberingEvolves:
+    """The SEC added Item 1C (Cybersecurity) to Part I in 2023. A filer whose Item 1B
+    now ends at Item 1C rather than Item 2 is following a normal, current filing
+    shape, not producing a doubtful parse."""
+
+    def test_item_1b_ending_at_1c_is_not_penalised(self):
+        section = extract_sections(filing("tenk_item_1c"))["1B"]
+        assert section.ended_at == "1C"
+        assert section.confidence == 1.0
+
+
 class TestSelection:
     def test_returns_only_the_requested_items(self, with_toc):
         sections = extract_sections(filing("tenk_with_toc"), items=("1A",))
