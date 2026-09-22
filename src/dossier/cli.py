@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 from dossier import __version__
@@ -24,7 +25,12 @@ from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
 from dossier.extract import EXTRACTOR_VERSION, extract_filing
 from dossier.ingest import ingest_filer
 from dossier.jobs import JobQueue, idempotency_key
+from dossier.prices import YahooPrices, store_prices
 from dossier.store import open_store
+
+#: How far back `dossier prices` fetches by default: enough for the screens to run as of
+#: today, a year ago and two years ago.
+DEFAULT_PRICE_HISTORY_DAYS = 3 * 366
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,6 +84,28 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--limit", type=int, help="stop after this many filings")
     extract.add_argument("--force", action="store_true", help="re-extract filings already done")
 
+    prices = subcommands.add_parser(
+        "prices",
+        parents=[common],
+        help="fetch daily closes for ingested filers, split adjustment undone",
+    )
+    prices.add_argument(
+        "--cik",
+        action="append",
+        type=int,
+        default=[],
+        metavar="CIK",
+        help="a filer to price; repeatable",
+    )
+    prices.add_argument(
+        "--all", action="store_true", help="price every ingested filer that has a ticker"
+    )
+    prices.add_argument(
+        "--since",
+        type=date.fromisoformat,
+        help="earliest date to fetch (default: three years ago)",
+    )
+
     analyze = subcommands.add_parser(
         "analyze",
         parents=[common],
@@ -107,7 +135,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None, *, client: EdgarClient | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    client: EdgarClient | None = None,
+    prices: YahooPrices | None = None,
+) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
@@ -122,6 +155,8 @@ def main(argv: list[str] | None = None, *, client: EdgarClient | None = None) ->
             return _ingest(args, config, client)
         if args.command == "extract":
             return _extract(args, config, client)
+        if args.command == "prices":
+            return _prices(args, config, prices)
         if args.command == "analyze":
             return _analyze(args, config)
         if args.command == "status":
@@ -336,6 +371,105 @@ def _extract(args, config: Config, client: EdgarClient | None) -> int:
             {
                 "command": "extract",
                 "extracted": len(results),
+                "failures": failures,
+                "results": results,
+            }
+        )
+    return 1 if failures else 0
+
+
+def _prices_one(
+    queue: JobQueue, conn, source: YahooPrices, cik: int, since: date, through: date
+) -> dict:
+    """Price one filer as one job.
+
+    Unlike a filing, a price history grows every trading day, so the job is keyed by the
+    day it runs through: re-running the same day is a cache hit, the next day is not.
+    """
+    result: dict = {"cik": cik, "ticker": None, "status": None, "error": None}
+    filer = conn.execute("SELECT ticker FROM filer WHERE cik = ?", (cik,)).fetchone()
+    if filer is None:
+        result["status"] = "not_ingested"
+        result["error"] = "run `dossier ingest` for this filer first"
+        return result
+    ticker = filer["ticker"]
+    result["ticker"] = ticker
+    if not ticker:
+        # Nothing to retry until ingest supplies a ticker, so this is not a failure.
+        result["status"] = "no_ticker"
+        return result
+
+    inputs = {
+        "cik": cik,
+        "ticker": ticker,
+        "since": since.isoformat(),
+        "through": through.isoformat(),
+    }
+    key = idempotency_key("fetch_prices", inputs)
+    if queue.completed(key) is not None:
+        result["status"] = "cached"
+        return result
+
+    queue.enqueue("fetch_prices", inputs)
+    claimed = queue.claim_by_key(key)
+    if claimed is None:
+        result["status"] = "skipped"
+        result["error"] = "too many failed attempts"
+        return result
+
+    try:
+        points = source.daily(ticker, since, through)
+        inserted = store_prices(conn, cik, ticker, points)
+    except Exception as exc:  # one bad ticker must not cost the rest
+        queue.fail(claimed, f"{type(exc).__name__}: {exc}")
+        result["status"] = "failed"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
+
+    latest = max((p.price_date for p in points), default=None)
+    queue.finish(claimed, json.dumps({"days": len(points), "inserted": inserted, "latest": latest}))
+    result.update(status="fetched", days=len(points), days_inserted=inserted, latest=latest)
+    return result
+
+
+def _prices(args, config: Config, source: YahooPrices | None) -> int:
+    through = date.today()
+    since = args.since or through - timedelta(days=DEFAULT_PRICE_HISTORY_DAYS)
+    results = []
+    with open_store(config.store_path) as conn:
+        ciks = list(args.cik)
+        if args.all:
+            ciks += [
+                row["cik"]
+                for row in conn.execute(
+                    "SELECT cik FROM filer WHERE ticker IS NOT NULL ORDER BY cik"
+                )
+            ]
+        if not ciks:
+            print("dossier prices: give it --cik or --all", file=sys.stderr)
+            return 2
+
+        owned = source is None
+        source = source or YahooPrices()
+        try:
+            queue = JobQueue(conn, output_dir=config.output_dir)
+            _say(args.as_json, f"Pricing {len(ciks)} filer(s) since {since}")
+            for cik in dict.fromkeys(ciks):
+                result = _prices_one(queue, conn, source, cik, since, through)
+                results.append(result)
+                _say(args.as_json, f"  {cik}: {result['status']}")
+        finally:
+            if owned:
+                source.close()
+
+    failures = sum(1 for r in results if r["status"] in ("failed", "skipped", "not_ingested"))
+    if args.as_json:
+        _emit(
+            {
+                "command": "prices",
+                "since": since.isoformat(),
+                "through": through.isoformat(),
+                "requested": len(results),
                 "failures": failures,
                 "results": results,
             }

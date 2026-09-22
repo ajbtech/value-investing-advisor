@@ -56,6 +56,25 @@ class Fact:
 
 
 @dataclass(frozen=True)
+class Price:
+    cik: int
+    ticker: str
+    price_date: str
+    close: float
+    source: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> Price:
+        return cls(
+            cik=row["cik"],
+            ticker=row["ticker"],
+            price_date=row["price_date"],
+            close=row["close"],
+            source=row["source"],
+        )
+
+
+@dataclass(frozen=True)
 class Filer:
     cik: int
     name: str
@@ -133,6 +152,21 @@ class AsOfView:
                 continue
             latest[(fact.tag, fact.unit, fact.period_start, fact.period_end)] = fact
         return sorted(latest.values(), key=lambda f: (f.tag, f.period_end))
+
+    # -- prices --------------------------------------------------------------
+
+    def price(self, cik: int) -> Price | None:
+        """The last close on or before the as-of date.
+
+        The caller sees `price_date`, so a stale price — a filer that stopped trading —
+        is visible as stale rather than silently standing in for today's.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM price WHERE cik = ? AND price_date <= ? "
+            "ORDER BY price_date DESC LIMIT 1",
+            (cik, self._as_of),
+        ).fetchone()
+        return Price.from_row(row) if row else None
 
     # -- filings -------------------------------------------------------------
 
