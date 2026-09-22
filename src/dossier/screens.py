@@ -284,7 +284,159 @@ SELECT *,
 FROM scored
 """
 
-_VIEWS = ["piotroski", "universe_screened", "shares_latest", "annual", "annual_raw"]
+#: Ranked screens flag their top this-many. Threshold screens flag whatever passes.
+TOP_N = 10
+#: US federal statutory rate, used for every filer alike so ROIC is comparable across
+#: filers rather than reflecting one year's tax items.
+STATUTORY_TAX_RATE = 0.21
+QUALITY_MIN_ROIC = 0.12
+QUALITY_YEARS = 7
+QUALITY_MIN_FCF_YIELD = 0.05
+
+# The latest fiscal year of every eligible filer, with the enterprise value the priced
+# screens share. Missing debt counts as none and missing cash as none, which errs toward
+# a higher EV: a screen that overstates cheapness is the worse mistake.
+SCREEN_BASE_SQL = """
+CREATE TEMP VIEW screen_base AS
+SELECT a.*, u.name, u.ticker, u.market_cap, u.price, u.price_date, u.shares, u.shares_date,
+  COALESCE(a.long_term_debt, 0) + COALESCE(a.current_debt, 0) AS total_debt,
+  u.market_cap + COALESCE(a.long_term_debt, 0) + COALESCE(a.current_debt, 0)
+    - COALESCE(a.cash, 0) AS enterprise_value
+FROM (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY cik ORDER BY fy_end DESC) AS recency
+  FROM annual
+) a
+JOIN universe_screened u ON u.cik = a.cik AND u.excluded_because IS NULL
+WHERE a.recency = 1
+"""
+
+# Greenblatt: earnings yield (EBIT / EV) and return on tangible capital
+# (EBIT / (net working capital + net PP&E)), ranked separately and the ranks summed.
+MAGIC_FORMULA_SQL = f"""
+CREATE TEMP VIEW magic_formula AS
+WITH m AS (
+  SELECT b.*,
+    ebit / enterprise_value AS earnings_yield,
+    (current_assets - COALESCE(cash, 0)) - (current_liabilities - COALESCE(current_debt, 0))
+      + ppe AS tangible_capital
+  FROM screen_base b
+  WHERE ebit IS NOT NULL AND enterprise_value > 0
+    AND current_assets IS NOT NULL AND current_liabilities IS NOT NULL AND ppe IS NOT NULL
+),
+r AS (
+  SELECT m.*, ebit / tangible_capital AS return_on_capital FROM m WHERE tangible_capital > 0
+),
+ranked AS (
+  SELECT r.*,
+    RANK() OVER (ORDER BY earnings_yield DESC) AS ey_rank,
+    RANK() OVER (ORDER BY return_on_capital DESC) AS roc_rank
+  FROM r
+),
+final AS (
+  SELECT ranked.*,
+    RANK() OVER (ORDER BY ey_rank + roc_rank, earnings_yield DESC) AS rank
+  FROM ranked
+)
+SELECT *, (rank <= {TOP_N} AND ebit > 0) AS flagged FROM final
+"""
+
+# Graham: market cap below current assets less every liability.
+NET_NET_SQL = """
+CREATE TEMP VIEW net_net AS
+WITH n AS (
+  SELECT b.*, current_assets - liabilities AS net_current_assets
+  FROM screen_base b
+  WHERE current_assets IS NOT NULL AND liabilities IS NOT NULL
+    AND current_assets - liabilities > 0
+)
+SELECT n.*, market_cap / net_current_assets AS price_to_ncav,
+  RANK() OVER (ORDER BY market_cap / net_current_assets) AS rank,
+  (market_cap < net_current_assets) AS flagged
+FROM n
+"""
+
+# (Operating cash flow - maintenance capex) / EV. Maintenance capex is estimated as the
+# smaller of capex and depreciation, or all of capex when depreciation is not reported.
+# A filer with no capex figure is left out rather than assumed to spend nothing.
+OWNER_EARNINGS_SQL = f"""
+CREATE TEMP VIEW owner_earnings AS
+WITH o AS (
+  SELECT b.*,
+    CASE WHEN depreciation IS NULL THEN capex ELSE MIN(capex, depreciation) END
+      AS maintenance_capex
+  FROM screen_base b
+  WHERE cfo IS NOT NULL AND capex IS NOT NULL AND enterprise_value > 0
+),
+y AS (
+  SELECT o.*, cfo - maintenance_capex AS owner_earnings,
+    (cfo - maintenance_capex) / enterprise_value AS owner_earnings_yield
+  FROM o
+),
+final AS (
+  SELECT y.*, RANK() OVER (ORDER BY owner_earnings_yield DESC) AS rank FROM y
+)
+SELECT *, (rank <= {TOP_N} AND owner_earnings > 0) AS flagged FROM final
+"""
+
+# After-tax ROIC above 12% in each of the last seven consecutive fiscal years, and a
+# free-cash-flow yield on market cap above 5%. Survivorship-flavoured by construction:
+# only a company that lasted seven years can pass it.
+QUALITY_SQL = f"""
+CREATE TEMP VIEW quality_at_price AS
+WITH yearly AS (
+  SELECT cik, fy_end,
+    ebit * (1 - {STATUTORY_TAX_RATE})
+      / NULLIF(COALESCE(equity, 0) + COALESCE(long_term_debt, 0) + COALESCE(current_debt, 0)
+               - COALESCE(cash, 0), 0) AS roic,
+    ROW_NUMBER() OVER (PARTITION BY cik ORDER BY fy_end DESC) AS recency
+  FROM annual
+),
+streak AS (
+  SELECT cik, COUNT(*) AS years_counted, COUNT(roic) AS years_with_roic,
+    MIN(roic) AS min_roic, MIN(fy_end) AS first_fy_end, MAX(fy_end) AS last_fy_end
+  FROM yearly WHERE recency <= {QUALITY_YEARS} GROUP BY cik
+),
+q AS (
+  SELECT b.*, s.years_counted, s.years_with_roic, s.min_roic, s.first_fy_end,
+    cfo - capex AS free_cash_flow,
+    (cfo - capex) / market_cap AS fcf_yield,
+    (s.years_counted = {QUALITY_YEARS}
+      AND s.years_with_roic = {QUALITY_YEARS}
+      AND julianday(s.last_fy_end) - julianday(s.first_fy_end)
+          BETWEEN {QUALITY_YEARS - 1} * {_LO} AND {QUALITY_YEARS - 1} * {_HI}
+      AND s.min_roic > {QUALITY_MIN_ROIC}
+      AND (cfo - capex) / market_cap > {QUALITY_MIN_FCF_YIELD}) AS flagged
+  FROM screen_base b JOIN streak s ON s.cik = b.cik
+  WHERE b.cfo IS NOT NULL AND b.capex IS NOT NULL
+)
+SELECT *,
+  CASE WHEN flagged THEN RANK() OVER (PARTITION BY flagged ORDER BY fcf_yield DESC) END
+    AS rank
+FROM q
+"""
+
+#: The five screens, in the build plan's order. Never blended into one score: which
+#: screen surfaced a company is the first thing the analysis layer needs to know.
+SCREENS = {
+    "magic_formula": "high EBIT/EV and high return on capital: cheap quality compounders",
+    "piotroski": "nine accounting-health tests: improving balance sheets",
+    "net_net": "market cap below net current assets: deep value, liquidation floor",
+    "owner_earnings": "(operating cash flow - maintenance capex) / EV: true cash generation",
+    "quality_at_price": "ROIC above 12% for 7 years with FCF yield above 5%: durable, on sale",
+}
+
+_VIEWS = [
+    "quality_at_price",
+    "owner_earnings",
+    "net_net",
+    "magic_formula",
+    "screen_base",
+    "piotroski",
+    "universe_screened",
+    "shares_latest",
+    "annual",
+    "annual_raw",
+]
 
 
 def prepare(conn: sqlite3.Connection, as_of: date | str) -> AsOfView:
@@ -294,7 +446,18 @@ def prepare(conn: sqlite3.Connection, as_of: date | str) -> AsOfView:
     with conn:
         for name in _VIEWS:
             conn.execute(f"DROP VIEW IF EXISTS temp.{name}")
-        for sql in (_annual_raw_sql(), ANNUAL_SQL, SHARES_SQL, UNIVERSE_SQL, PIOTROSKI_SQL):
+        for sql in (
+            _annual_raw_sql(),
+            ANNUAL_SQL,
+            SHARES_SQL,
+            UNIVERSE_SQL,
+            PIOTROSKI_SQL,
+            SCREEN_BASE_SQL,
+            MAGIC_FORMULA_SQL,
+            NET_NET_SQL,
+            OWNER_EARNINGS_SQL,
+            QUALITY_SQL,
+        ):
             conn.execute(sql)
     return view
 
@@ -307,6 +470,13 @@ def universe_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM universe_screened ORDER BY cik").fetchall()
 
 
+def screen_rows(conn: sqlite3.Connection, screen: str) -> list[sqlite3.Row]:
+    """One screen's output: ranked filers first, then any it could not rank."""
+    if screen not in SCREENS:
+        raise ValueError(f"no screen named {screen!r}; the screens are {', '.join(SCREENS)}")
+    # `screen` is checked against a fixed set above, so it is safe to interpolate.
+    return conn.execute(f"SELECT * FROM {screen} ORDER BY rank IS NULL, rank, cik").fetchall()
+
+
 def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Ranked filers first, then any whose score could not be completed."""
-    return conn.execute("SELECT * FROM piotroski ORDER BY rank IS NULL, rank, cik").fetchall()
+    return screen_rows(conn, "piotroski")
