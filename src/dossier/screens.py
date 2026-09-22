@@ -189,7 +189,102 @@ SELECT cik, name, ticker, sic, track, last_10k, fiscal_years, latest_fy_end,
 FROM base
 """
 
-_VIEWS = ["universe_screened", "shares_latest", "annual", "annual_raw"]
+#: A Piotroski score at or above this is flagged. Piotroski's own "high" portfolio was 8-9.
+PIOTROSKI_FLAG = 8
+
+_LO, _HI = FISCAL_YEAR_DAYS
+_PIOTROSKI_TESTS = [
+    "f_roa",
+    "f_cfo",
+    "f_delta_roa",
+    "f_accrual",
+    "f_leverage",
+    "f_liquidity",
+    "f_no_dilution",
+    "f_margin",
+    "f_turnover",
+]
+
+# Piotroski (2000), nine binary tests on the latest fiscal year (t) against the one
+# before it (t-1). Return on assets uses beginning-of-year assets, so t-2's balance sheet
+# is needed too. Two deliberate choices, both documented here because a reader will
+# trip over them:
+#
+# - A filer with no long-term debt in either year passes the leverage test. Strictly,
+#   leverage has to *fall*; a debt-free company cannot, and failing it for that would
+#   penalise the least-levered balance sheets in the universe.
+# - A filer is ranked only if all nine tests could be computed. Six passes out of six
+#   computable tests is not comparable to six out of nine, so an incomplete score is
+#   reported, never ranked.
+PIOTROSKI_SQL = f"""
+CREATE TEMP VIEW piotroski AS
+WITH seq AS (
+  SELECT a.*,
+    LAG(fy_end) OVER w AS fy_end_1,
+    LAG(fy_end, 2) OVER w AS fy_end_2,
+    LAG(net_income) OVER w AS net_income_1,
+    LAG(assets) OVER w AS assets_1,
+    LAG(assets, 2) OVER w AS assets_2,
+    LAG(long_term_debt) OVER w AS long_term_debt_1,
+    LAG(current_assets) OVER w AS current_assets_1,
+    LAG(current_liabilities) OVER w AS current_liabilities_1,
+    LAG(shares_weighted) OVER w AS shares_weighted_1,
+    LAG(gross_profit) OVER w AS gross_profit_1,
+    LAG(revenue) OVER w AS revenue_1,
+    ROW_NUMBER() OVER (PARTITION BY cik ORDER BY fy_end DESC) AS recency
+  FROM annual a
+  WINDOW w AS (PARTITION BY cik ORDER BY fy_end)
+),
+latest AS (
+  SELECT *, net_income / assets_1 AS roa, net_income_1 / assets_2 AS roa_1
+  FROM seq
+  WHERE recency = 1
+    AND julianday(fy_end) - julianday(fy_end_1) BETWEEN {_LO} AND {_HI}
+    AND julianday(fy_end_1) - julianday(fy_end_2) BETWEEN {_LO} AND {_HI}
+),
+tested AS (
+  SELECT l.*,
+    CASE WHEN roa IS NULL THEN NULL WHEN roa > 0 THEN 1 ELSE 0 END AS f_roa,
+    CASE WHEN cfo IS NULL THEN NULL WHEN cfo > 0 THEN 1 ELSE 0 END AS f_cfo,
+    CASE WHEN roa IS NULL OR roa_1 IS NULL THEN NULL
+         WHEN roa > roa_1 THEN 1 ELSE 0 END AS f_delta_roa,
+    CASE WHEN cfo IS NULL OR net_income IS NULL THEN NULL
+         WHEN cfo > net_income THEN 1 ELSE 0 END AS f_accrual,
+    CASE WHEN NULLIF(assets, 0) IS NULL OR NULLIF(assets_1, 0) IS NULL THEN NULL
+         WHEN COALESCE(long_term_debt, 0) = 0 AND COALESCE(long_term_debt_1, 0) = 0 THEN 1
+         WHEN COALESCE(long_term_debt, 0) / assets
+              < COALESCE(long_term_debt_1, 0) / assets_1 THEN 1 ELSE 0 END AS f_leverage,
+    CASE WHEN current_assets IS NULL OR current_assets_1 IS NULL
+           OR NULLIF(current_liabilities, 0) IS NULL
+           OR NULLIF(current_liabilities_1, 0) IS NULL THEN NULL
+         WHEN current_assets / current_liabilities
+              > current_assets_1 / current_liabilities_1 THEN 1 ELSE 0 END AS f_liquidity,
+    CASE WHEN shares_weighted IS NULL OR shares_weighted_1 IS NULL THEN NULL
+         WHEN shares_weighted <= shares_weighted_1 THEN 1 ELSE 0 END AS f_no_dilution,
+    CASE WHEN gross_profit IS NULL OR gross_profit_1 IS NULL
+           OR NULLIF(revenue, 0) IS NULL OR NULLIF(revenue_1, 0) IS NULL THEN NULL
+         WHEN gross_profit / revenue > gross_profit_1 / revenue_1 THEN 1 ELSE 0 END AS f_margin,
+    CASE WHEN revenue IS NULL OR revenue_1 IS NULL
+           OR NULLIF(assets_1, 0) IS NULL OR NULLIF(assets_2, 0) IS NULL THEN NULL
+         WHEN revenue / assets_1 > revenue_1 / assets_2 THEN 1 ELSE 0 END AS f_turnover
+  FROM latest l
+),
+scored AS (
+  SELECT t.*, u.name, u.ticker, u.market_cap,
+    {" + ".join(f"COALESCE({name}, 0)" for name in _PIOTROSKI_TESTS)} AS score,
+    {" + ".join(f"({name} IS NOT NULL)" for name in _PIOTROSKI_TESTS)} AS tests_scored
+  FROM tested t
+  JOIN universe_screened u ON u.cik = t.cik AND u.excluded_because IS NULL
+)
+SELECT *,
+  CASE WHEN tests_scored = 9
+       THEN RANK() OVER (PARTITION BY tests_scored = 9 ORDER BY score DESC, roa DESC) END
+    AS rank,
+  (tests_scored = 9 AND score >= {PIOTROSKI_FLAG}) AS flagged
+FROM scored
+"""
+
+_VIEWS = ["piotroski", "universe_screened", "shares_latest", "annual", "annual_raw"]
 
 
 def prepare(conn: sqlite3.Connection, as_of: date | str) -> AsOfView:
@@ -199,7 +294,7 @@ def prepare(conn: sqlite3.Connection, as_of: date | str) -> AsOfView:
     with conn:
         for name in _VIEWS:
             conn.execute(f"DROP VIEW IF EXISTS temp.{name}")
-        for sql in (_annual_raw_sql(), ANNUAL_SQL, SHARES_SQL, UNIVERSE_SQL):
+        for sql in (_annual_raw_sql(), ANNUAL_SQL, SHARES_SQL, UNIVERSE_SQL, PIOTROSKI_SQL):
             conn.execute(sql)
     return view
 
@@ -210,3 +305,8 @@ def annual_rows(conn: sqlite3.Connection, cik: int) -> list[sqlite3.Row]:
 
 def universe_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM universe_screened ORDER BY cik").fetchall()
+
+
+def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Ranked filers first, then any whose score could not be completed."""
+    return conn.execute("SELECT * FROM piotroski ORDER BY rank IS NULL, rank, cik").fetchall()

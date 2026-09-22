@@ -8,7 +8,7 @@ knowable on the as-of date, and that every filer that drops out of the universe 
 import pytest
 
 from dossier.asof import AsOfView
-from dossier.screens import annual_rows, prepare, universe_rows
+from dossier.screens import annual_rows, piotroski_rows, prepare, universe_rows
 from dossier.store import open_store
 from tests.builders import StoreBuilder
 
@@ -222,3 +222,148 @@ class TestUniverse:
         b.done()
         prepare(store, AS_OF)
         assert 1 not in by_cik(universe_rows(store))
+
+
+# -- Piotroski ------------------------------------------------------------------------
+
+#: Three consecutive fiscal years in which every one of the nine tests passes in 2024.
+IMPROVING = {
+    2022: {"Assets": 1000.0, "NetIncomeLoss": 40.0},
+    2023: {
+        "NetIncomeLoss": 50.0,
+        "Assets": 1000.0,
+        "NetCashProvidedByUsedInOperatingActivities": 60.0,
+        "LongTermDebtNoncurrent": 300.0,
+        "AssetsCurrent": 400.0,
+        "LiabilitiesCurrent": 300.0,
+        "WeightedAverageNumberOfSharesOutstandingBasic": 100.0,
+        "Revenues": 1000.0,
+        "GrossProfit": 300.0,
+    },
+    2024: {
+        "NetIncomeLoss": 80.0,
+        "Assets": 1000.0,
+        "NetCashProvidedByUsedInOperatingActivities": 120.0,
+        "LongTermDebtNoncurrent": 250.0,
+        "AssetsCurrent": 450.0,
+        "LiabilitiesCurrent": 300.0,
+        "WeightedAverageNumberOfSharesOutstandingBasic": 100.0,
+        "Revenues": 1100.0,
+        "GrossProfit": 360.0,
+    },
+}
+
+#: The mirror image: in 2024 only the accrual test passes, and only because operating
+#: cash flow, while negative, is less negative than net income.
+DETERIORATING = {
+    2022: {"Assets": 1000.0, "NetIncomeLoss": 40.0},
+    2023: IMPROVING[2024],
+    2024: {
+        "NetIncomeLoss": -10.0,
+        "Assets": 1000.0,
+        "NetCashProvidedByUsedInOperatingActivities": -5.0,
+        "LongTermDebtNoncurrent": 400.0,
+        "AssetsCurrent": 300.0,
+        "LiabilitiesCurrent": 300.0,
+        "WeightedAverageNumberOfSharesOutstandingBasic": 120.0,
+        "Revenues": 900.0,
+        "GrossProfit": 200.0,
+    },
+}
+
+
+def screened_filer(b: StoreBuilder, cik: int, years: dict, early=(2019, 2020, 2021)):
+    """An eligible filer whose last three fiscal years are given explicitly."""
+    b.filer(cik, name=f"Filer {cik}")
+    b.history(cik, list(early), **HEALTHY)
+    for year, values in years.items():
+        b.annual(cik, f"{year}-12-31", f"{year + 1}-02-15", **values)
+    b.shares(cik, 100_000_000, "2025-04-30", "2025-05-05")
+    b.price(cik, "2025-06-27", 20.0)
+
+
+class TestPiotroski:
+    def test_an_improving_company_scores_nine(self, store):
+        b = StoreBuilder(store)
+        screened_filer(b, 1, IMPROVING)
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(piotroski_rows(store))[1]
+        assert row["tests_scored"] == 9
+        assert row["score"] == 9
+        assert row["flagged"] == 1
+
+    def test_a_deteriorating_company_scores_one(self, store):
+        b = StoreBuilder(store)
+        screened_filer(b, 1, DETERIORATING)
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(piotroski_rows(store))[1]
+        assert row["score"] == 1
+        assert row["f_accrual"] == 1
+        assert row["flagged"] == 0
+
+    def test_ranks_higher_scores_first(self, store):
+        b = StoreBuilder(store)
+        screened_filer(b, 1, DETERIORATING)
+        screened_filer(b, 2, IMPROVING)
+        b.done()
+        prepare(store, AS_OF)
+        ranked = [row["cik"] for row in piotroski_rows(store) if row["rank"] is not None]
+        assert ranked == [2, 1]
+
+    def test_uses_the_latest_year_known_by_the_as_of_date(self, store):
+        """As of January 2025 the 2024 10-K had not been filed, so the score is for 2023."""
+        b = StoreBuilder(store)
+        screened_filer(b, 1, IMPROVING)
+        b.shares(1, 100_000_000, "2024-10-31", "2024-11-05")
+        b.price(1, "2025-01-30", 20.0)
+        b.done()
+        prepare(store, "2025-01-31")
+        assert by_cik(piotroski_rows(store))[1]["fy_end"] == "2023-12-31"
+
+    def test_missing_inputs_leave_a_company_unranked(self, store):
+        """Six passes out of six computable tests is not comparable to six out of nine."""
+        b = StoreBuilder(store)
+        incomplete = {
+            **IMPROVING,
+            2024: {
+                k: v for k, v in IMPROVING[2024].items() if k not in ("Revenues", "GrossProfit")
+            },
+        }
+        screened_filer(b, 1, incomplete)
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(piotroski_rows(store))[1]
+        assert row["tests_scored"] < 9
+        assert row["rank"] is None
+        assert row["flagged"] == 0
+
+    def test_a_gap_between_fiscal_years_is_not_a_comparison(self, store):
+        """Comparing 2024 with 2022 because 2023 is missing would score two years of
+        change as one."""
+        b = StoreBuilder(store)
+        gapped = {2021: IMPROVING[2022], 2022: IMPROVING[2023], 2024: IMPROVING[2024]}
+        screened_filer(b, 1, gapped, early=(2017, 2018, 2019, 2020))
+        b.done()
+        prepare(store, AS_OF)
+        assert 1 not in by_cik(piotroski_rows(store))
+
+    def test_a_debt_free_company_passes_the_leverage_test(self, store):
+        b = StoreBuilder(store)
+        debt_free = {
+            year: {k: v for k, v in values.items() if k != "LongTermDebtNoncurrent"}
+            for year, values in IMPROVING.items()
+        }
+        screened_filer(b, 1, debt_free)
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(piotroski_rows(store))[1]["f_leverage"] == 1
+
+    def test_only_the_eligible_universe_is_screened(self, store):
+        b = StoreBuilder(store)
+        screened_filer(b, 1, IMPROVING)
+        store.execute("UPDATE price SET close = 0.01")
+        b.done()
+        prepare(store, AS_OF)
+        assert 1 not in by_cik(piotroski_rows(store))
