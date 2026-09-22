@@ -137,6 +137,19 @@ class TestIngestCommand:
         main(["ingest", "--cik", "320193"], client=edgar)
         assert "cached" in capsys.readouterr().out.lower()
 
+    def test_widening_the_tag_set_re_runs_instead_of_serving_the_cache(
+        self, data_dir, edgar, capsys, monkeypatch
+    ):
+        """A completed ingest is only valid for the tags it fetched. Add a tag and every
+        filer ingested before it would silently never get that tag."""
+        import dossier.cli
+
+        main(["ingest", "--cik", "320193"], client=edgar)
+        capsys.readouterr()
+        monkeypatch.setattr(dossier.cli, "INGEST_VERSION", "a-wider-tag-set")
+        main(["ingest", "--cik", "320193"], client=edgar)
+        assert "cached" not in capsys.readouterr().out.lower()
+
     def test_force_re_runs_a_completed_job(self, data_dir, edgar, capsys):
         main(["ingest", "--cik", "320193"], client=edgar)
         capsys.readouterr()

@@ -23,7 +23,7 @@ from dossier.asof import fact_count
 from dossier.config import Config
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
 from dossier.extract import EXTRACTOR_VERSION, extract_filing
-from dossier.ingest import ingest_filer
+from dossier.ingest import INGEST_VERSION, ingest_filer
 from dossier.jobs import JobQueue, idempotency_key
 from dossier.prices import YahooPrices, store_prices
 from dossier.store import open_store
@@ -191,14 +191,14 @@ def _client(client: EdgarClient | None) -> EdgarClient:
 def _ingest_one(queue: JobQueue, conn, edgar: EdgarClient, cik: int, force: bool) -> dict:
     """Ingest one filer as one job. Returns a structured result for either output mode."""
     inputs = {"cik": cik}
-    key = idempotency_key("ingest_filer", inputs)
+    key = idempotency_key("ingest_filer", inputs, prompt_version=INGEST_VERSION)
     result: dict = {"cik": cik, "status": None, "error": None}
 
     if queue.completed(key) is not None and not force:
         result["status"] = "cached"
         return result
 
-    job = queue.enqueue("ingest_filer", inputs)
+    job = queue.enqueue("ingest_filer", inputs, prompt_version=INGEST_VERSION)
     if force and job.status == "done":
         queue.reopen(job)
     claimed = queue.claim_by_key(key)

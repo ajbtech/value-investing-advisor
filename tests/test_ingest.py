@@ -16,10 +16,24 @@ from dossier.ingest import (
     ingest_filer,
     parse_company_facts,
     parse_submissions,
+    tags_version,
 )
 from dossier.store import open_store
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class TestTagsVersion:
+    def test_changes_when_a_tag_is_added(self):
+        assert tags_version(SCREEN_TAGS) != tags_version(SCREEN_TAGS | {"SomeNewTag"})
+
+    def test_ignores_the_order_tags_were_listed_in(self):
+        assert tags_version(["B", "A"]) == tags_version(["A", "B"])
+
+    def test_covers_cost_of_goods_and_services_sold(self):
+        """Apple, among many others, reports cost of sales under this tag rather than
+        CostOfRevenue. Without it their gross margin cannot be computed at all."""
+        assert "CostOfGoodsAndServicesSold" in SCREEN_TAGS
 
 
 def fixture(name):
