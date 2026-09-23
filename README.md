@@ -38,9 +38,22 @@ What works today:
   quoted claim string-matched against the source filing before it is stored. Across five
   companies and seven passes so far: **52 findings, 0 dropped, 0% fabrication.**
 
-Not built yet: the valuation engine, the thesis generator and bear pass, the decision
-journal, the quarterly falsification re-check, and Passes B, C and D. `STATE.md` has the
-current state in detail, including the limitations that are known and open.
+- **A valuation engine** that values owner earnings as a range, never a point. Every
+  assumption a model supplies is a bear/base/bull triple with a justification that has
+  to cite a figure or a finding; the discount rate, the terminal growth cap and the
+  margin of safety are constants in code that no input can move. It also reports what
+  today's price already implies, so that comparison is made rather than assumed.
+
+- **A thesis, a bear pass and a journal.** A thesis is only stored if every section is
+  there, the mispricing names a mechanism rather than restating that the price is wrong,
+  and at least two falsification conditions carry a number, a direction and a window —
+  so the quarterly re-check can actually check them. Revising appends rather than
+  overwrites. The bear pass quotes filings like every other pass and attaches to the
+  version it attacked. The journal is one file per entry, in your own directory, never
+  in this repository, and it records what was passed over as well as what was not.
+
+Not built yet: the quarterly falsification re-check, and Passes B, C and D. `STATE.md` has the current state in
+detail, including the limitations that are known and open.
 
 ## Install
 
@@ -95,6 +108,15 @@ uv run dossier analyze --pass a --cik 57131 --prepare --out input.json
 # Claude reads both filings and writes findings.json
 uv run dossier analyze --pass a --cik 57131 --load findings.json
 uv run dossier analyze --pass a --cik 57131 --item 7 --prepare   # ...and the MD&A
+
+uv run dossier value --cik 57131 --prepare --out valuation.json
+# Claude proposes bear/base/bull assumptions, each with a justification
+uv run dossier value --cik 57131 --load assumptions.json
+
+uv run dossier thesis --cik 57131 --prepare --out thesis_input.json
+uv run dossier thesis --cik 57131 --load thesis.json          # ...and journal it
+uv run dossier thesis --cik 57131 --bear --prepare            # then try to kill it
+uv run dossier thesis --cik 57131 --pass-over "reason"        # a candidate not taken
 ```
 
 Item 1A and Item 7 have a prompt each, because the two sections are different kinds of

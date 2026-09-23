@@ -257,6 +257,92 @@ Two other things the audit found that are now fixed:
   the API-key line contradicted the design decision that there is no key. Rewritten
   against what the code actually does.
 
+## Milestone 8 — the valuation engine, built and run live
+
+`dossier value --cik N --prepare` / `--load`, the same seam as an analysis pass. Owner
+earnings discounted over ten years: cash from operations less the capital expenditure
+needed to stand still. Operating cash flow is already after interest and tax, so
+discounting owner earnings gives the equity value directly and net debt is not
+subtracted twice.
+
+**What a model may propose, and what it may not.** Revenue growth and the owner earnings
+margin, each as a bear/base/bull triple with a justification. The discount rate (10%),
+the terminal growth cap (2.5%) and the margin of safety (30% off the *bear* case) are
+constants in `dossier.valuation`. A proposed `discount_rate` is refused by name; a
+terminal rate above the cap is clamped rather than argued with; a triple ordered
+bear-above-bull is refused, because it would put the margin of safety on the wrong end
+of the range. A justification that describes the estimator rather than the evidence — "a
+conservative estimate" — is rejected, and one citing a figure or an accession passes.
+
+**Maintenance capex, the input filers do not report,** is estimated two ways — total
+capex, and the seven-year average of capex as a share of revenue, applied to this year's
+revenue — and both are kept with the spread between them. The lesser is used. For
+La-Z-Boy that is $63.2M against $76.3M of actual capex, a $13.1M spread, which is the
+size of the estimate's own uncertainty made visible.
+
+**Live on La-Z-Boy, as of 2026-09-23** (revenue $2,126,635 thousand, owner earnings
+$140.9M, 40.05M shares, $30.33 a share):
+
+| | per share |
+| --- | --- |
+| bear (−3% growth, 4% margin) | $19.59 |
+| base (+1% growth, 6% margin) | $39.07 |
+| bull (+4% growth, 7.5% margin) | $60.69 |
+| buy below (30% under bear) | $13.72 |
+
+**Today's price implies revenue growth of −2.6% a year** at the base margin. That number
+is why the plan asks for implied expectations: the market is not pricing the base case
+and disagreeing with it would be the position, not the starting point. The assumptions
+came from the findings — the bear case is the Casegoods wholesale disposal and
+same-store sales down 3%; the margin history behind the triple runs 6.6%, 5.9%, 5.1% and
+0.1% over the last four years, so the bear margin of 4% is *not* the worst this business
+has done.
+
+**What is deliberately not built.** No sensitivity grid, no scenario weighting, no
+probability-weighted expected value: a weighted average of three scenarios is a point
+estimate with extra steps, and the range is the answer. Milestone 9 (thesis, bear pass,
+journal) is where a valuation turns into a decision, and nothing here does that.
+
+## Milestone 9 — thesis, bear pass and journal, built and run live
+
+`dossier thesis --cik N --prepare` / `--load`, `--bear` for the pass that attacks it, and
+`--pass-over "reason"` for a candidate that cleared screening and was not taken.
+
+**What is enforced in code rather than asked for in a prompt.** A thesis needs a stored
+valuation first, so the argument comes after the price rather than reaching for it. Every
+section is required. The mispricing needs a named mechanism — a `reason_type` that is a
+synonym for "cheap" is refused, and an explanation containing "the market is wrong" is
+refused by name. Falsification needs at least two conditions, each with a numeric
+threshold, a direction and a window, because the quarterly re-check of milestone 10 reads
+these and cannot read a sentence. No section may read as a recommendation. **Revising
+appends**: the earlier version stays exactly as written, since a thesis that can be
+quietly rewritten records nothing.
+
+**The bear pass cites filings like everyone else.** Each point carries a verbatim quote
+validated against the stored section; what fails is dropped and counted, and the exit
+code is 1 when anything was. What survives attaches to the thesis version it attacked.
+
+**Live on La-Z-Boy, thesis v1 as of 2026-09-23.** Written against the valuation ($19.59 /
+$39.07 / $60.69, price $30.33, implied growth −2.6%) and all 18 findings. Its mispricing
+reason is a housing-linked demand trough with disposals shrinking reported revenue; its
+four falsification conditions are same-store sales below −3% for two consecutive years,
+owner earnings margin below 4% in a year, operating margin below 5% for two years, and
+the company-owned store count falling below 378.
+
+**The bear pass ran with a planted fabrication, to check the validator on real text: 5
+kept, 1 dropped, 17% fabrication rate, exit 1.** The five that survived are the ones that
+matter: the warranty reserve release behind 50bp of the Wholesale SG&A improvement; the
+dealer count halving from "approximately 1,900" to "over 1,000", which is distribution
+lost rather than demand deferred; total written sales up 8% against same-store down 3%;
+capex guidance of "$90 to $110 million for fiscal 2027" against the $63.2M maintenance
+figure the valuation charges; and Joybird's loss widening by more than its impairment.
+The invented point — that management expects demand to recover in fiscal 2027 — was
+dropped as `quote_not_found`, which is the whole design working on live text rather than
+on a fixture.
+
+The journal entry landed outside the checkout, in the per-user data directory, one file
+per entry, fsynced before the command reported success.
+
 ## Next concrete step
 
 **The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`
@@ -349,7 +435,9 @@ Next, in rough order of value:
 4. **A wider universe.** 500 filers by lowest CIK is not the market. `--limit 5000`
    would take roughly an hour and a half of ingest at the SEC's rate limit — or one
    download, if the bulk ZIPs of audit item 3 land first.
-5. **Milestone 8, the valuation engine**, which is the next milestone proper.
+5. ~~Milestone 8, the valuation engine~~ — **built and run live on La-Z-Boy**, above.
+   Milestone 9 (thesis, bear pass, journal) is the next milestone proper, and the plan
+   calls it the part that compounds for a single user.
 
 The audit's other items — dead CIKs, bulk ingest, a wider extractor sample, the
 financial track — are above in "The plan, checked against what exists", with why each
@@ -384,8 +472,8 @@ public, driven from Claude Code on an existing subscription rather than an API k
 | 2 | Section extractor for Item 1A / 7 / footnotes | **validated on 11 real Apple 10-Ks** — one known gap, see below |
 | 4 | Pass A (risk-factor diff) end to end, one company | **gate passed** — 9 findings, 0% fabrication, on a real filer |
 | 3 | Five screens as SQL views + JSON output | **done**, run live over 500 filers |
-| 8 | Valuation engine with bear/base/bull | not started |
-| 9 | Thesis generator + bear pass + journal | **raised** — compounds for a single user |
+| 8 | Valuation engine with bear/base/bull | **done**, run live on La-Z-Boy (CIK 57131) |
+| 9 | Thesis generator + bear pass + journal | **done**, run live on La-Z-Boy (CIK 57131) |
 | 10 | Quarterly falsification re-check job | **raised** — the highest-leverage feature |
 | 7 | Passes B, C, D | not started |
 | 5 | FastAPI app: screen index + dossier + filing diff | **deferred** |
