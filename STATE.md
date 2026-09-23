@@ -343,6 +343,45 @@ on a fixture.
 The journal entry landed outside the checkout, in the per-user data directory, one file
 per entry, fsynced before the command reported success.
 
+## Milestone 10 — the quarterly falsification re-check, built and run live
+
+`dossier recheck` re-reads every open thesis against its own falsification conditions.
+The plan calls it the highest-leverage feature in the system, and two properties decide
+its design.
+
+**It never reports a thesis as holding when it could not check.** A condition whose
+metric is not computable comes back as `needs_a_human`, counted separately and named in
+the summary. Silence would be indistinguishable from good news, which is the exact
+failure this job exists to prevent. The first implementation had this bug for about ten
+minutes: "written same-store sales" matched the `sales` alias by substring and reported
+*holding* after checking revenue. Metric resolution now matches from the start of the
+phrase only, and the test that caught it says why.
+
+**It does not tell you to sell.** It reports what you said, the numbers it measured, and
+asks whether you still mean it. Exit code 1 on any breach or any condition it could not
+check, so a scheduled run nobody reads still says something a machine can act on.
+
+**Live on the La-Z-Boy thesis:**
+
+| condition | result |
+| --- | --- |
+| written same-store sales below −3%, two years | **needs a human** — not in XBRL |
+| owner earnings margin below 4%, one year | holding — 6.63% in FY2026 |
+| consolidated operating margin below 5%, two years | holding — 6.08%, 6.44% |
+| company-owned store count below 378 | **needs a human** — not in XBRL |
+
+**Two of four conditions could be checked, and that is the finding.** A thesis written
+by a careful reader naturally reaches for the measures a company discusses in prose —
+same-store sales, store count — and those are exactly the ones XBRL does not carry.
+Prompt `thesis_v2` now names the seven metrics `recheck` computes and asks for at least
+one machine-checkable condition, so a quarter nobody has time to read still gets checked
+on something. A test asserts the vocabulary and the prompt stay in step.
+
+**What is still manual.** Nothing schedules this yet. The plan is explicit that it has
+to run where the data is — the store is in a per-user data directory and cloud sessions
+cannot reach `sec.gov` — so scheduling it means a Routine bound to this machine, which
+is a setup step for the user rather than code in the repository.
+
 ## Next concrete step
 
 **The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`
@@ -474,7 +513,7 @@ public, driven from Claude Code on an existing subscription rather than an API k
 | 3 | Five screens as SQL views + JSON output | **done**, run live over 500 filers |
 | 8 | Valuation engine with bear/base/bull | **done**, run live on La-Z-Boy (CIK 57131) |
 | 9 | Thesis generator + bear pass + journal | **done**, run live on La-Z-Boy (CIK 57131) |
-| 10 | Quarterly falsification re-check job | **raised** — the highest-leverage feature |
+| 10 | Quarterly falsification re-check job | **done**, run live; scheduling is a user setup step |
 | 7 | Passes B, C, D | not started |
 | 5 | FastAPI app: screen index + dossier + filing diff | **deferred** |
 | 6 | Packaging, guided first run, sample database | **deferred** — no strangers to survive |

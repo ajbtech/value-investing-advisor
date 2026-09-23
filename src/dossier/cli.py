@@ -26,6 +26,7 @@ from dossier.extract import EXTRACTOR_VERSION, extract_filing
 from dossier.ingest import INGEST_VERSION, ingest_filer
 from dossier.jobs import JobQueue, idempotency_key
 from dossier.prices import YahooPrices, store_prices
+from dossier.recheck import recheck_all, recheck_thesis
 from dossier.screens import (
     CANDIDATE_LIMIT,
     SCREENER_VERSION,
@@ -221,6 +222,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     thesis.add_argument("--out", metavar="FILE", help="write prepared input here")
 
+    recheck = subcommands.add_parser(
+        "recheck",
+        parents=[common],
+        help="re-check every open thesis against its own falsification conditions",
+    )
+    recheck.add_argument(
+        "--cik", type=int, metavar="CIK", help="one company instead of every open thesis"
+    )
+    recheck.add_argument(
+        "--as-of", dest="as_of", metavar="YYYY-MM-DD", help="which thesis, by its date"
+    )
+    recheck.add_argument(
+        "--on",
+        metavar="YYYY-MM-DD",
+        help="re-check as it would have read on this date (default: today)",
+    )
+
     subcommands.add_parser(
         "status", parents=[common], help="what is in the store and what work is pending"
     )
@@ -260,6 +278,8 @@ def main(
             return _value(args, config)
         if args.command == "thesis":
             return _thesis(args, config)
+        if args.command == "recheck":
+            return _recheck(args, config)
         if args.command == "status":
             return _status(args, config)
         if args.command == "resume":
@@ -643,6 +663,72 @@ def _screen(args, config: Config) -> int:
         trend = f"[{candidate['trend']}] " if candidate.get("trend") else ""
         print(f"  {trend}{candidate['ticker'] or candidate['cik']}: {candidate['flag_reason']}")
     return 0
+
+
+def _recheck(args, config: Config) -> int:
+    """The quarterly re-check. It reports; it never advises.
+
+    Exit 1 when anything was breached or could not be checked, so a scheduled run that
+    nobody reads still says something a machine can act on.
+    """
+    with open_store(config.store_path) as conn:
+        try:
+            if args.cik:
+                as_of = args.as_of
+                if as_of is None:
+                    row = conn.execute(
+                        "SELECT MAX(as_of) AS as_of FROM thesis WHERE cik = ?", (args.cik,)
+                    ).fetchone()
+                    as_of = row["as_of"] if row else None
+                if as_of is None:
+                    print(f"dossier recheck: no thesis for CIK {args.cik}", file=sys.stderr)
+                    return 2
+                reports = [
+                    recheck_thesis(
+                        conn,
+                        cik=args.cik,
+                        as_of=as_of,
+                        on=args.on,
+                        journal_dir=config.journal_dir,
+                    )
+                ]
+            else:
+                reports = recheck_all(conn, on=args.on, journal_dir=config.journal_dir)
+        except ValueError as exc:
+            print(f"dossier recheck: {exc}", file=sys.stderr)
+            return 2
+
+    if args.as_json:
+        _emit({"command": "recheck", "reports": reports})
+    elif not reports:
+        print("No theses to re-check.")
+    else:
+        for report in reports:
+            print(
+                f"CIK {report['cik']}, thesis v{report['thesis_version']} of "
+                f"{report['as_of']}: {report['status']}"
+            )
+            for condition in report["conditions"]:
+                said = condition["you_said"]
+                observed = (
+                    ", ".join(
+                        f"{point['fy_end']}: "
+                        f"{'n/a' if point['value'] is None else format(point['value'], '.4g')}"
+                        for point in condition["observed"]
+                    )
+                    or "nothing measured"
+                )
+                print(
+                    f"  [{condition['status']}] {said['metric']} {said['direction']} "
+                    f"{said['threshold']} over {said['window']}"
+                )
+                print(f"      {observed}")
+                if condition.get("note"):
+                    print(f"      {condition['note']}")
+            print(f"  {report['question']}")
+
+    breached = sum(r["breached"] + r["needs_a_human"] for r in reports)
+    return 1 if breached else 0
 
 
 def _thesis(args, config: Config) -> int:

@@ -26,7 +26,10 @@ from dossier.analysis import prompt_text
 from dossier.findings import quote_appears_in, reads_as_recommendation
 from dossier.valuation import stored_valuation
 
-THESIS_PROMPT = "thesis_v1"
+#: v2 names the metrics `dossier recheck` can evaluate on its own. The first live
+#: re-check could check two of four conditions and said so; the prompt now asks for at
+#: least one that a quarter nobody has time to read still gets checked on.
+THESIS_PROMPT = "thesis_v2"
 BEAR_PROMPT = "bear_v1"
 
 #: Every section the plan requires. A thesis missing one is not a shorter thesis; it is
