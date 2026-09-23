@@ -27,6 +27,13 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 #: you need to know whether the world changed or the prompt did.
 PASS_A_VERSION = "pass_a_v3"
 
+#: Pass A is a risk-factor *and MD&A* diff, and the two sections do not take the same
+#: reading: Item 1A is the risks management chose to name, Item 7 is management
+#: explaining its own numbers. One prompt each, so a finding always records the words
+#: that produced it. An item absent here has no Pass A prompt and is refused rather than
+#: run against instructions written for another section.
+PASS_A_PROMPTS = {"1A": PASS_A_VERSION, "7": "pass_a_mdna_v1"}
+
 #: Below this, the extraction is too doubtful to reason over. Analysing a bad parse
 #: produces confident findings about text the filing does not contain — the pass should
 #: refuse rather than launder a broken extraction into a dossier.
@@ -41,6 +48,19 @@ def prompt_text(version: str) -> str:
             "repository; add the file rather than inlining the text."
         )
     return path.read_text(encoding="utf-8")
+
+
+def prompt_version_for(item: str) -> str:
+    """The Pass A prompt written for this section."""
+    try:
+        return PASS_A_PROMPTS[item]
+    except KeyError:
+        known = ", ".join(sorted(PASS_A_PROMPTS))
+        raise ValueError(
+            f"no Pass A prompt for Item {item}. Pass A reads {known}; the footnotes are "
+            "Pass B's job. Running a pass against instructions written for another "
+            "section produces findings about the wrong thing."
+        ) from None
 
 
 @dataclass
@@ -115,6 +135,7 @@ def prepare_pass_a(
     min_confidence: float = MIN_SECTION_CONFIDENCE,
 ) -> AnalysisInput:
     """Pair a filer's two most recent extracted sections for comparison."""
+    prompt_version = prompt_version_for(item)
     rows = conn.execute(
         "SELECT d.accession_no FROM document_section d "
         "JOIN filing f ON f.accession_no = d.accession_no "
@@ -146,8 +167,8 @@ def prepare_pass_a(
     return AnalysisInput(
         cik=cik,
         item=item,
-        prompt_version=PASS_A_VERSION,
-        instructions=prompt_text(PASS_A_VERSION),
+        prompt_version=prompt_version,
+        instructions=prompt_text(prompt_version),
         current=current,
         prior=prior,
         screen=_screen_reason(conn, cik),
@@ -182,8 +203,9 @@ def load_findings(
     """
     raw = payload.get("findings", [])
     model = payload.get("model")
+    prompt_version = prompt_version_for(item)
     run_key = idempotency_key(
-        f"pass_{pass_name}", {"cik": cik, "item": item}, prompt_version=PASS_A_VERSION
+        f"pass_{pass_name}", {"cik": cik, "item": item}, prompt_version=prompt_version
     )
 
     parsed: list[Finding] = []
@@ -232,7 +254,7 @@ def load_findings(
                     finding.prior_accession_no,
                     finding.prior_quote,
                     pass_name,
-                    PASS_A_VERSION,
+                    prompt_version,
                     model,
                     now,
                 ),
@@ -254,7 +276,7 @@ def load_findings(
                 run_key,
                 cik,
                 pass_name,
-                PASS_A_VERSION,
+                prompt_version,
                 model,
                 len(kept),
                 sum(reasons.values()),
