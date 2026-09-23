@@ -106,8 +106,13 @@ keyless chart endpoint, which is unofficial: a `failed` result naming "delisted"
 - `universe` — how many filers were in the as-of universe, how many were `eligible`,
   and `excluded` counted by reason (no recent 10-K, financial track, under five years of
   history, no recent price, no share count, under the $300M floor).
-- `screens` — for each of the five, how many filers it could rank and how many it
-  flagged.
+- `screens` — for each of the five: how many filers were `eligible`, how many it could
+  `ranked`, how many it `flagged`, and `missing_data` counting the eligible filers it
+  could not rank because a figure it needs was not reported. **Report `ranked` against
+  `eligible`, not against the flag count.** The remaining difference is the screen's own
+  definition — net-net skips a filer whose net current assets are negative,
+  quality-at-price one without seven years of returns — and that is the screen working,
+  not a hole in the data.
 - `candidates` — each with `flagged_by` (screen, `rank`, `ranked` out of how many, and
   the metrics), a `flag_reason`, the `price` and `shares` used for market cap with their
   sources, and `inputs`: every reported fact behind the ratios with its `accession_no`

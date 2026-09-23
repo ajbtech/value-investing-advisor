@@ -382,6 +382,50 @@ to run where the data is — the store is in a per-user data directory and cloud
 cannot reach `sec.gov` — so scheduling it means a Routine bound to this machine, which
 is a setup step for the user rather than code in the repository.
 
+## Capital expenditure was one XBRL element, and a third of the universe had stopped using it
+
+Found by running three companies end to end rather than by reading code. Armstrong World
+Industries — Piotroski 9/9, rank 1 of 195 — was refused by `dossier value`: "no owner
+earnings ... operating cash flow or capital expenditure is missing". The guard was right,
+and what it was guarding turned out to be large.
+
+**83 of 289 eligible filers had no annual capital expenditure in the store.** Not because
+they stopped spending: because they stopped using
+`PaymentsToAcquirePropertyPlantAndEquipment`, which was the only capex element ingested.
+American Electric Power last reported it for fiscal 2020, Balchem for 2022, MasTec and
+Astronics for 2011, Lumen for 2013. Armstrong reports it only for nine-month
+year-to-date periods. Filers migrate elements and never migrate back.
+
+The effect was silent. Those filers stayed eligible, kept passing Piotroski, and simply
+never appeared in the owner-earnings ranking — "rank 3 of 198" in a universe of 289,
+with nothing saying where the other 91 went.
+
+**Both halves are fixed.** Ingest and the annual pivot now read four alternates
+(`PaymentsToAcquireProductiveAssets`, `PaymentsForCapitalImprovements`,
+`PaymentsToAcquireOtherPropertyPlantAndEquipment`,
+`PaymentsToAcquireMachineryAndEquipment`), coalesced with the standard element first so a
+filer reporting both stays comparable. And every screen now reports `eligible`, `ranked`
+and `missing_data` — the eligible filers it could not rank, counted by what was missing.
+
+Live, before any re-ingest (the alternates are not in the store yet):
+
+| screen | ranked of 289 | biggest data gap |
+| --- | --- | --- |
+| magic_formula | 195 | 44 no operating income, 40 no PP&E |
+| piotroski | 195 | 15 no operating cash flow |
+| net_net | 65 | 8 no current assets |
+| owner_earnings | 198 | **76 no annual capital expenditure** |
+| quality_at_price | 8 | **64 no annual capital expenditure** |
+
+`missing_data` counts data gaps only. Net-net ranking 65 of 289 is mostly its own
+definition — it skips filers whose net current assets are negative — and quality-at-price
+ranking 8 is the seven-year ROIC streak doing its job. Conflating the two would cry wolf.
+
+**This needs a re-ingest to take effect.** `INGEST_VERSION` is a hash of the tag set, so
+it changed when the tags did and `dossier ingest --limit 500` will refetch rather than
+skip. That has to run on this machine with `EDGAR_USER_AGENT` set, and `SCREENER_VERSION`
+is now 4 so the cached screen will not be served in the meantime.
+
 ## Next concrete step
 
 **The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`
