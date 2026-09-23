@@ -66,6 +66,7 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier thesis --cik N --load F` | Validate the thesis, append it, write the journal entry. |
 | `dossier thesis --cik N --bear --prepare` / `--load F` | The bear pass: attack the stored thesis, quoting filings. |
 | `dossier thesis --cik N --pass-over "REASON"` | Record a candidate that cleared screening and was passed over. |
+| `dossier recheck --json` | Re-check every open thesis against its own falsification conditions. |
 | `dossier status --json` | What the store holds and what work is pending. |
 | `dossier resume --json` | Retry everything pending or failed. |
 
@@ -238,6 +239,23 @@ process rather than of its successes.
 
 When presenting a thesis, give the bear case alongside it, always. It is attached to the
 thesis permanently and quoting only the bull half misrepresents what the store holds.
+
+## The quarterly re-check
+
+`dossier recheck --json` reads every open thesis against the conditions it set. Each
+condition comes back as `breached`, `holding` or **`needs_a_human`**, and the third is
+the one to lead with: it means the metric is not in XBRL — same-store sales, store
+count, backlog — so nothing was measured. Never round that up to "holding". Exit code is
+1 if anything was breached *or* could not be checked.
+
+`recheck` computes `owner_earnings_margin`, `operating_margin`, `gross_margin`,
+`revenue_growth`, `revenue`, `operating_income` and `net_income`. When helping write a
+thesis, use at least one of those names exactly, so a quarter nobody reads still gets
+checked on something.
+
+Report a breach as what it is: the user said they would treat this as evidence they were
+wrong. Quote the condition and the measured numbers, and ask whether they still mean it.
+Do not suggest selling — that was never this tool's call.
 
 ## Workflows
 

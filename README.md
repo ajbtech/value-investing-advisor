@@ -52,7 +52,14 @@ What works today:
   version it attacked. The journal is one file per entry, in your own directory, never
   in this repository, and it records what was passed over as well as what was not.
 
-Not built yet: the quarterly falsification re-check, and Passes B, C and D. `STATE.md` has the current state in
+- **A quarterly falsification re-check.** `dossier recheck` reads every open thesis
+  against its own conditions and reports what has been breached — and, just as
+  importantly, what it could **not** check, because a condition reported as holding
+  when nothing was measured is worse than no condition at all. It does not tell you to
+  sell; it tells you that you said you would, and asks whether you still mean it.
+
+Not built yet: Passes B, C and D (footnotes, earnings calls, proxy incentives), and
+scheduling the re-check, which has to be bound to the machine holding the data. `STATE.md` has the current state in
 detail, including the limitations that are known and open.
 
 ## Install
@@ -117,6 +124,8 @@ uv run dossier thesis --cik 57131 --prepare --out thesis_input.json
 uv run dossier thesis --cik 57131 --load thesis.json          # ...and journal it
 uv run dossier thesis --cik 57131 --bear --prepare            # then try to kill it
 uv run dossier thesis --cik 57131 --pass-over "reason"        # a candidate not taken
+
+uv run dossier recheck                 # every open thesis against its own conditions
 ```
 
 Item 1A and Item 7 have a prompt each, because the two sections are different kinds of
