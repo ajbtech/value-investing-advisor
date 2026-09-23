@@ -64,6 +64,25 @@ _RECOMMENDATION = re.compile(
 )
 
 
+#: A thesis is written in the first person about what to do, so it can recommend in the
+#: imperative where a finding cannot: "Buy more below $20" has no "we should" in it.
+#: Kept separate so the findings validator's behaviour is unchanged.
+_IMPERATIVE_RECOMMENDATION = re.compile(
+    r"^\W*(?:buy|sell|short|accumulate|add\s+to|trim|exit)\b",
+    re.IGNORECASE,
+)
+
+
+def reads_as_recommendation(text: str) -> bool:
+    """Does this text tell someone what to do with the stock?
+
+    The passes and the thesis both report and argue rather than advise; judgment about
+    what to do with the conclusion is the reader's, and this is a research tool that
+    makes no individualised recommendations.
+    """
+    return bool(_RECOMMENDATION.search(text) or _IMPERATIVE_RECOMMENDATION.match(text))
+
+
 def normalise_for_match(text: str) -> str:
     """Flatten the differences that are noise, and none of the ones that are signal."""
     text = unicodedata.normalize("NFKC", text)

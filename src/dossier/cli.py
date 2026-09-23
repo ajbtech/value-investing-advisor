@@ -33,6 +33,13 @@ from dossier.screens import (
     store_candidates,
 )
 from dossier.store import open_store
+from dossier.thesis import (
+    load_bear_pass,
+    load_thesis,
+    prepare_bear_pass,
+    prepare_thesis,
+    record_pass_over,
+)
 from dossier.valuation import load_valuation, prepare_valuation
 
 #: How far back `dossier prices` fetches by default: enough for the screens to run as of
@@ -184,6 +191,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     valuation.add_argument("--out", metavar="FILE", help="write prepared input here")
 
+    thesis = subcommands.add_parser(
+        "thesis",
+        parents=[common],
+        help="write or attack a thesis, and record it in the journal",
+    )
+    thesis.add_argument("--cik", type=int, required=True, metavar="CIK")
+    thesis.add_argument(
+        "--as-of", dest="as_of", metavar="YYYY-MM-DD", help="the valuation to argue from"
+    )
+    thesis.add_argument(
+        "--bear",
+        action="store_true",
+        help="the bear pass: attack the stored thesis rather than writing one",
+    )
+    thesis.add_argument(
+        "--prepare", action="store_true", help="write the pass's input for a model to read"
+    )
+    thesis.add_argument(
+        "--load",
+        metavar="FILE",
+        help="read it back, validate it, store it and write the journal entry",
+    )
+    thesis.add_argument(
+        "--pass-over",
+        dest="pass_over",
+        metavar="REASON",
+        help="record a candidate that cleared screening and was passed over, and why",
+    )
+    thesis.add_argument("--out", metavar="FILE", help="write prepared input here")
+
     subcommands.add_parser(
         "status", parents=[common], help="what is in the store and what work is pending"
     )
@@ -221,6 +258,8 @@ def main(
             return _analyze(args, config)
         if args.command == "value":
             return _value(args, config)
+        if args.command == "thesis":
+            return _thesis(args, config)
         if args.command == "status":
             return _status(args, config)
         if args.command == "resume":
@@ -604,6 +643,90 @@ def _screen(args, config: Config) -> int:
         trend = f"[{candidate['trend']}] " if candidate.get("trend") else ""
         print(f"  {trend}{candidate['ticker'] or candidate['cik']}: {candidate['flag_reason']}")
     return 0
+
+
+def _thesis(args, config: Config) -> int:
+    """The thesis, the bear pass that attacks it, and the journal entry for each.
+
+    The journal is the one artifact here that cannot be rebuilt from EDGAR, so it is
+    written to the user's own directory — never inside this repository — and each entry
+    gets its own file rather than editing one that already exists.
+    """
+    as_of = args.as_of or date.today().isoformat()
+    journal_dir = config.journal_dir
+
+    if args.pass_over:
+        try:
+            path = record_pass_over(journal_dir, cik=args.cik, as_of=as_of, reason=args.pass_over)
+        except ValueError as exc:
+            print(f"dossier thesis: {exc}", file=sys.stderr)
+            return 2
+        result = {"command": "thesis", "kind": "pass_over", "cik": args.cik, "journal_entry": path}
+        if args.as_json:
+            _emit(result)
+        else:
+            print(f"Recorded a pass-over for CIK {args.cik} in {path}")
+        return 0
+
+    if not args.prepare and not args.load:
+        print(
+            "dossier thesis: give it --prepare, --load FILE or --pass-over REASON", file=sys.stderr
+        )
+        return 2
+
+    with open_store(config.store_path) as conn:
+        prepare = prepare_bear_pass if args.bear else prepare_thesis
+        if args.prepare:
+            try:
+                payload = prepare(conn, cik=args.cik, as_of=as_of)
+            except ValueError as exc:
+                print(f"dossier thesis: {exc}", file=sys.stderr)
+                return 2
+            if args.out:
+                Path(args.out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                _say(
+                    args.as_json,
+                    f"Wrote {'bear pass' if args.bear else 'thesis'} input to {args.out}",
+                )
+            if args.as_json or not args.out:
+                _emit(payload)
+            return 0
+
+        source = Path(args.load)
+        if not source.exists():
+            print(f"dossier thesis: no such file {source}", file=sys.stderr)
+            return 2
+        try:
+            proposed = json.loads(source.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"dossier thesis: {source} is not valid JSON — {exc}", file=sys.stderr)
+            return 2
+
+        load = load_bear_pass if args.bear else load_thesis
+        try:
+            result = load(
+                conn, cik=args.cik, as_of=as_of, payload=proposed, journal_dir=journal_dir
+            )
+        except ValueError as exc:
+            print(f"dossier thesis: {exc}", file=sys.stderr)
+            return 2
+
+    if args.as_json:
+        _emit(result)
+    elif args.bear:
+        print(
+            f"Bear pass on thesis v{result['thesis_version']}: kept {result['kept']}, "
+            f"dropped {result['dropped']}"
+        )
+        for reason, count in sorted(result["drop_reasons"].items()):
+            print(f"  {reason}: {count}")
+        rate = result["fabrication_rate"]
+        print(f"Fabrication rate: {'n/a' if rate is None else f'{rate:.0%}'}")
+    else:
+        print(f"Stored thesis v{result['version']} for CIK {result['cik']}")
+        if result["journal_entry"]:
+            print(f"Journal entry: {result['journal_entry']}")
+    return 0 if not args.bear or result["dropped"] == 0 else 1
 
 
 def _value(args, config: Config) -> int:
