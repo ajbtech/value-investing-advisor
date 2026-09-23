@@ -77,7 +77,7 @@ def _annual_raw_sql() -> str:
         for tag, unit in ANNUAL_TAGS
     )
     return f"""
-CREATE TEMP VIEW annual_raw AS
+CREATE TEMP TABLE annual_raw AS
 WITH fiscal_year AS (
   SELECT DISTINCT cik, period_end AS fy_end FROM fact_asof
   WHERE period_start <> ''
@@ -105,8 +105,10 @@ _EQUITY = (
     '"StockholdersEquity")'
 )
 
+#: `annual_raw` and `annual` are TEMP *tables*, not views: five screens read `annual`,
+#: and as a view its pivot over every fact was recomputed for each of them.
 ANNUAL_SQL = f"""
-CREATE TEMP VIEW annual AS
+CREATE TEMP TABLE annual AS
 SELECT cik, fy_end,
   {_REVENUE} AS revenue,
   {_COST} AS cost_of_revenue,
@@ -153,7 +155,7 @@ WHOLE_COMPANY_RATIO = 0.8
 # of more than a fifth within a year is sized a little high as a result: that errs
 # toward a larger market cap and lower yields, the safer mistake for a screen.
 SHARES_SQL = f"""
-CREATE TEMP VIEW shares_latest AS
+CREATE TEMP TABLE shares_latest AS
 WITH p AS (SELECT as_of FROM asof_param),
 point_in_time AS (
   SELECT * FROM (
@@ -203,7 +205,7 @@ FROM chosen
 """
 
 UNIVERSE_SQL = f"""
-CREATE TEMP VIEW universe_screened AS
+CREATE TEMP TABLE universe_screened AS
 WITH p AS (SELECT as_of FROM asof_param),
 years AS (
   SELECT cik, COUNT(*) AS fiscal_years, MAX(fy_end) AS latest_fy_end FROM annual GROUP BY cik
@@ -351,7 +353,7 @@ QUALITY_MIN_FCF_YIELD = 0.05
 # screens share. Missing debt counts as none and missing cash as none, which errs toward
 # a higher EV: a screen that overstates cheapness is the worse mistake.
 SCREEN_BASE_SQL = """
-CREATE TEMP VIEW screen_base AS
+CREATE TEMP TABLE screen_base AS
 SELECT a.*, u.name, u.ticker, u.market_cap, u.price, u.price_date, u.shares, u.shares_date,
   COALESCE(a.long_term_debt, 0) + COALESCE(a.current_debt, 0) AS total_debt,
   u.market_cap + COALESCE(a.long_term_debt, 0) + COALESCE(a.current_debt, 0)
@@ -486,11 +488,11 @@ _VIEWS = [
     "magic_formula",
     "screen_base",
     "piotroski",
-    "universe_screened",
-    "shares_latest",
-    "annual",
-    "annual_raw",
 ]
+
+#: Materialised once per run, and dropped after the views that read them. Every one of
+#: these is read by several screens, and as views their work was repeated each time.
+_TABLES = ["screen_base", "universe_screened", "shares_latest", "annual", "annual_raw"]
 
 
 def prepare(conn: sqlite3.Connection, as_of: date | str) -> AsOfView:
@@ -500,6 +502,8 @@ def prepare(conn: sqlite3.Connection, as_of: date | str) -> AsOfView:
     with conn:
         for name in _VIEWS:
             conn.execute(f"DROP VIEW IF EXISTS temp.{name}")
+        for name in _TABLES:
+            conn.execute(f"DROP TABLE IF EXISTS temp.{name}")
         for sql in (
             _annual_raw_sql(),
             ANNUAL_SQL,
@@ -513,6 +517,9 @@ def prepare(conn: sqlite3.Connection, as_of: date | str) -> AsOfView:
             QUALITY_SQL,
         ):
             conn.execute(sql)
+        conn.execute("CREATE INDEX temp.annual_by_filer ON annual (cik, fy_end)")
+        conn.execute("CREATE INDEX temp.universe_by_filer ON universe_screened (cik)")
+        conn.execute("CREATE INDEX temp.screen_base_by_filer ON screen_base (cik)")
     return view
 
 
