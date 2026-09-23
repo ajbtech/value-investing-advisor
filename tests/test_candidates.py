@@ -116,6 +116,65 @@ class TestCandidates:
         assert universe["excluded"] == {"market cap below $300M": 1}
 
 
+class TestHistory:
+    """The plan's deliberate addition: run the screens as of 12 and 24 months ago too,
+    and diff. A company that has been cheap and getting cheaper for two years is a
+    different animal from one that just fell into the screen this quarter, and the
+    difference routes to different prompts downstream."""
+
+    def priced_history(self, store, cheap_from="2023-01-01"):
+        """A filer eligible throughout, but only cheap enough to flag from a given date."""
+        b = StoreBuilder(store)
+        b.filer(1, name="Cheap Co")
+        b.history(1, list(range(2017, 2025)), **{**HEALTHY, "OperatingIncomeLoss": 600_000_000})
+        for year in range(2017, 2027):
+            b.shares(1, 100_000_000, f"{year}-04-30", f"{year}-05-05")
+        for day in ("2023-06-27", "2024-06-27", "2025-06-27"):
+            b.price(1, day, 20.0 if day >= cheap_from else 20.0)
+        store.commit()
+
+    def test_each_candidate_carries_what_the_screens_said_before(self, store):
+        self.priced_history(store)
+        run = build_candidates(store, AS_OF, compare_months=(12, 24))
+        history = by_cik(run)[1]["history"]
+        assert [h["as_of"] for h in history] == ["2024-06-30", "2023-06-30"]
+        assert all(h["eligible"] for h in history)
+
+    def test_a_filer_flagged_at_every_date_is_persistent(self, store):
+        self.priced_history(store)
+        assert by_cik(build_candidates(store, AS_OF, compare_months=(12, 24)))[1]["trend"] == (
+            "persistent"
+        )
+
+    def test_a_filer_that_was_not_eligible_before_is_new(self, store):
+        """No price and no share count two years ago: it could not have been screened."""
+        b = StoreBuilder(store)
+        b.filer(1, name="Newcomer")
+        b.history(1, list(range(2017, 2025)), **{**HEALTHY, "OperatingIncomeLoss": 600_000_000})
+        b.shares(1, 100_000_000, "2025-04-30", "2025-05-05")
+        b.price(1, "2025-06-27", 20.0)
+        store.commit()
+        candidate = by_cik(build_candidates(store, AS_OF, compare_months=(12, 24)))[1]
+        assert candidate["trend"] == "new"
+        assert candidate["history"][0]["eligible"] is False
+        assert candidate["history"][0]["excluded_because"]
+
+    def test_history_is_as_of_that_date_not_today(self, store):
+        """The 12-month-ago run must not see a filing made since."""
+        self.priced_history(store)
+        StoreBuilder(store).annual(1, "2025-12-31", "2026-02-15", **HEALTHY)
+        store.commit()
+        history = by_cik(build_candidates(store, AS_OF, compare_months=(12,)))[1]["history"]
+        assert history[0]["as_of"] == "2024-06-30"
+        assert history[0]["fiscal_year_end"] < "2025-12-31"
+
+    def test_no_compare_months_means_no_history(self, store):
+        two_filers(store)
+        candidate = by_cik(build_candidates(store, AS_OF))[1]
+        assert candidate["history"] == []
+        assert candidate["trend"] is None
+
+
 class TestFingerprint:
     def test_adding_an_older_filing_changes_it(self, store):
         """Ingesting a new filer adds rows dated before the as-of date, so the same

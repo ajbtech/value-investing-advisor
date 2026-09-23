@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 #: The tags the screens actually use. `companyfacts` carries several thousand; ingesting
 #: the rest costs a weekend and tens of gigabytes for nothing. Widen this later — you
@@ -96,6 +96,9 @@ class FilerRecord:
     exchange: str | None = None
     sic: str | None = None
     last_filing_date: str | None = None
+    #: The earliest filing we know of. `first_seen` in the store, and what the as-of
+    #: universe filters on, so it must never be the most recent filing.
+    first_filing_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,7 @@ def parse_submissions(doc: dict) -> tuple[FilerRecord, list[FilingRecord]]:
         exchange=_first(doc.get("exchanges")),
         sic=doc.get("sic") or None,
         last_filing_date=max((f.filed_date for f in filings if f.filed_date), default=None),
+        first_filing_date=min((f.filed_date for f in filings if f.filed_date), default=None),
     )
     return filer, filings
 
@@ -237,7 +241,7 @@ def _upsert_filer(conn: sqlite3.Connection, filer: FilerRecord) -> None:
     conn.execute(
         """
         INSERT INTO filer (cik, name, ticker, exchange, sic, first_seen, last_filing_date)
-        VALUES (:cik, :name, :ticker, :exchange, :sic, :last_filing_date, :last_filing_date)
+        VALUES (:cik, :name, :ticker, :exchange, :sic, :first_filing_date, :last_filing_date)
         ON CONFLICT(cik) DO UPDATE SET
             name = excluded.name,
             ticker = excluded.ticker,
@@ -247,8 +251,8 @@ def _upsert_filer(conn: sqlite3.Connection, filer: FilerRecord) -> None:
                 COALESCE(excluded.last_filing_date, ''), COALESCE(filer.last_filing_date, '')
             ),
             first_seen = MIN(
-                COALESCE(filer.first_seen, excluded.first_seen, ''),
-                COALESCE(excluded.first_seen, '')
+                COALESCE(filer.first_seen, excluded.first_seen),
+                COALESCE(excluded.first_seen, filer.first_seen)
             )
         """,
         {
@@ -258,6 +262,7 @@ def _upsert_filer(conn: sqlite3.Connection, filer: FilerRecord) -> None:
             "exchange": filer.exchange,
             "sic": filer.sic,
             "last_filing_date": filer.last_filing_date,
+            "first_filing_date": filer.first_filing_date,
         },
     )
 
@@ -314,6 +319,14 @@ def ingest_filer(
                 filed_date=fact.filed_date,
             )
     result.stub_filings = len(stubs)
+
+    # Stub filings reach back further than the submissions window, so the earliest
+    # filing we know of may come from a fact rather than from `filings.recent`.
+    earliest = min(
+        (f.filed_date for f in [*filings, *stubs.values()] if f.filed_date),
+        default=filer.first_filing_date,
+    )
+    filer = replace(filer, first_filing_date=earliest)
 
     with conn:
         _upsert_filer(conn, filer)

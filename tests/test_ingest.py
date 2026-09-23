@@ -6,6 +6,7 @@ makes an honest as-of query possible from free data, so it is what these tests g
 """
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,38 @@ from dossier.ingest import (
 from dossier.store import open_store
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class TestFirstSeen:
+    """`first_seen` is what the as-of universe filters on, so getting it wrong empties
+    the universe at every past date. It must be the filer's earliest known filing, not
+    its most recent one."""
+
+    def test_parse_reports_the_earliest_filing_date(self, submissions):
+        filer, filings = parse_submissions(submissions)
+        assert filer.first_filing_date == min(f.filed_date for f in filings)
+        assert filer.first_filing_date < filer.last_filing_date
+
+    def test_ingest_stores_the_earliest_not_the_latest(self, store, submissions, company_facts):
+        ingest_filer(store, submissions, company_facts)
+        row = store.execute("SELECT first_seen, last_filing_date FROM filer").fetchone()
+        earliest = store.execute("SELECT MIN(filed_date) FROM filing").fetchone()[0]
+        assert row["first_seen"] == earliest
+        assert row["first_seen"] < row["last_filing_date"]
+
+    def test_a_filer_is_in_the_universe_as_of_a_past_date(self, store, submissions, company_facts):
+        """The regression that hid the screen-history bug: with first_seen set to the
+        latest filing, every as-of date before today returned an empty universe."""
+        ingest_filer(store, submissions, company_facts)
+        earliest = store.execute("SELECT MIN(filed_date) FROM filing").fetchone()[0]
+        one_day_after = (date.fromisoformat(earliest) + timedelta(days=1)).isoformat()
+        assert [f.cik for f in AsOfView(store, one_day_after).universe()] == [320193]
+
+    def test_re_ingesting_never_moves_it_later(self, store, submissions, company_facts):
+        ingest_filer(store, submissions, company_facts)
+        before = store.execute("SELECT first_seen FROM filer").fetchone()["first_seen"]
+        ingest_filer(store, submissions, company_facts)
+        assert store.execute("SELECT first_seen FROM filer").fetchone()["first_seen"] == before
 
 
 class TestTagsVersion:

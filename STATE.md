@@ -199,10 +199,24 @@ Next, in rough order of value:
    doing in batches and watching the fabrication rate across them: two companies at 0% is
    a data point, thirty is a metric. Diffing the risk-factor *headings* first is much
    cheaper than reading both sections end to end, and points straight at what moved.
-2. **Screens as of 12 and 24 months ago, diffed** — the plan's "deliberate addition",
-   and unbuilt. A company that has been getting cheaper for two years is a different
-   animal from one that fell in this quarter, and the difference routes to different
-   prompts.
+2. ~~Screens as of 12 and 24 months ago, diffed~~ — **built.** `dossier screen --compare
+   12,24` runs the screens at each date and gives every candidate a `history` and a
+   `trend`. On the live store: 7 persistent, 11 new, 8 returning, 4 recent. La-Z-Boy has
+   screened well at all three dates, Armstrong has scored a top Piotroski three years
+   running, and Kodak is new — consistent with a one-off pension reversion. Flexsteel's
+   "new" is a data fact, not a value signal: it was ineligible at both earlier dates.
+
+   **This found a serious bug.** `first_seen` was being written with the filer's *most
+   recent* filing date, and the as-of universe filters on `first_seen <= as_of`, so
+   every filer vanished from every past date and a historical screen returned an empty
+   universe in silence. 498 of 501 filers were affected. Ingest now records the earliest
+   filing it knows of, including from stub filings that predate the submissions window,
+   and migration 007 repairs what is already stored from the filings themselves.
+
+   A second lesson from the same run: the screen job's fingerprint counts rows, on the
+   assumption that rows are only ever added. A migration *edits* them, so the repair did
+   not invalidate the cached run and the old answer kept being served. `SCREENER_VERSION`
+   is the lever for that, and it is now 3.
 3. **A wider universe.** 500 filers by lowest CIK is not the market. `--limit 5000`
    would take roughly an hour and a half of ingest at the SEC's rate limit.
 4. **Milestone 8, the valuation engine**, which is the next milestone proper.
