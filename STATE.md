@@ -134,19 +134,22 @@ Both gaps that run exposed are since fixed: the running page-footer is stripped 
 
 ## Next concrete step
 
-**Join the screener to the analysis passes.** Everything needed for a dossier now
-exists except the seam between them: `dossier screen --out candidates.json` produces
-the candidate list, and `dossier analyze --pass a --cik N` still takes a bare CIK and
-knows nothing about why the company surfaced. The build plan is explicit that the model
-should be told which screen flagged it, because the interesting questions differ for a
-net-net and for a quality compounder. Concretely: have `analyze --prepare` read the
-candidate entry and carry `flag_reason` and the screen metrics into the prompt.
+**The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`
+now carries the screen reason (prompt `pass_a_v2`), and the first candidate through the
+whole chain — screen, extract, prepare, analyse, validate — was La-Z-Boy (CIK 57131),
+flagged by three screens. Pass A produced **7 findings, 0 dropped, 0% fabrication**, and
+the screen context earned its place: LZB was flagged partly on a Piotroski improvement,
+and the prior-year filing that improvement is measured against says "During fiscal 2025
+we fully impaired the goodwill and intangible asset related to our businesses in the
+United Kingdom" (0000057131-25-000029). In the fiscal 2026 filing the UK is gone from
+Item 1A entirely, and the manufacturing list reads "the United States and Mexico".
 
-Then, in rough order of value:
+Next, in rough order of value:
 
-1. **Extract and analyse the candidates.** `dossier extract --cik N` for the 30
-   candidates, then Pass A over each. That is the first run of the whole pipeline end
-   to end on companies nobody chose by hand, which is the real test of it.
+1. **The other 29 candidates.** Each is `dossier extract --cik N` then a Pass A the
+   session reads and writes. That is a session's work, not a command, so it is worth
+   doing in batches and watching the fabrication rate across them: one company at 0% is
+   a data point, thirty is a metric.
 2. **Screens as of 12 and 24 months ago, diffed** — the plan's "deliberate addition",
    and unbuilt. A company that has been getting cheaper for two years is a different
    animal from one that fell in this quarter, and the difference routes to different
