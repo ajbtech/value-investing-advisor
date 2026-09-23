@@ -60,6 +60,8 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier analyze --pass a --cik N --prepare` | Write Pass A's input: the prompt and both Item 1A sections. |
 | `dossier analyze --pass a --cik N --item 7 --prepare` | The same, for the MD&A. Item 1A and Item 7 have a prompt each. |
 | `dossier analyze --pass a --cik N --load F` | Read findings back, validate every quote, store what survives. |
+| `dossier value --cik N --prepare` | Write the valuation's input: the figures, the findings, the fixed rules. |
+| `dossier value --cik N --load F` | Read assumptions back, validate every justification, store the range. |
 | `dossier status --json` | What the store holds and what work is pending. |
 | `dossier resume --json` | Retry everything pending or failed. |
 
@@ -177,6 +179,32 @@ Report it to the user honestly, including when it is bad.
 Never write a finding that recommends buying or selling. The loader rejects those, but
 the reason they are rejected matters more than the check: these passes report
 observations, and judgment happens later once all four are in view.
+
+## Running a valuation — you propose, the code decides
+
+Same two halves. `dossier value --cik N --prepare` hands you the company's annual
+figures with the filing behind each one, both maintenance capex estimates and the spread
+between them, every stored finding, and the constants you cannot change. You return two
+triples:
+
+- **`revenue_growth`** and **`owner_earnings_margin`**, each as `bear`, `base`, `bull`
+  with a one-sentence `justification`. `terminal_growth` is optional and capped anyway.
+- A justification that describes the estimator rather than the evidence — "a
+  conservative estimate" — is **rejected by the validator**, and rightly. Cite a figure
+  or a finding, so a reader can check it.
+- Do not propose a discount rate. It is one number applied to every filer, and the
+  loader refuses it by name.
+
+**Use the findings, or the pass has not read its own evidence.** If Pass A reported a
+reserve release inside an improving margin, the margin you propose should reflect it and
+say so.
+
+When presenting the result: give the **range**, never the base case alone, and say what
+today's price already implies — that is often the more useful number, because it turns
+"what is it worth" into "what does the market believe, and do I disagree". `buy_below`
+is a mechanical 30% discount to the *bear* case; it is a threshold, not a target and not
+a recommendation. A valuation is an argument with its assumptions attached, so quote the
+justifications when you quote the numbers.
 
 ## Workflows
 
