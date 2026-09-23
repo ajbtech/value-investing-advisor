@@ -303,6 +303,46 @@ probability-weighted expected value: a weighted average of three scenarios is a 
 estimate with extra steps, and the range is the answer. Milestone 9 (thesis, bear pass,
 journal) is where a valuation turns into a decision, and nothing here does that.
 
+## Milestone 9 — thesis, bear pass and journal, built and run live
+
+`dossier thesis --cik N --prepare` / `--load`, `--bear` for the pass that attacks it, and
+`--pass-over "reason"` for a candidate that cleared screening and was not taken.
+
+**What is enforced in code rather than asked for in a prompt.** A thesis needs a stored
+valuation first, so the argument comes after the price rather than reaching for it. Every
+section is required. The mispricing needs a named mechanism — a `reason_type` that is a
+synonym for "cheap" is refused, and an explanation containing "the market is wrong" is
+refused by name. Falsification needs at least two conditions, each with a numeric
+threshold, a direction and a window, because the quarterly re-check of milestone 10 reads
+these and cannot read a sentence. No section may read as a recommendation. **Revising
+appends**: the earlier version stays exactly as written, since a thesis that can be
+quietly rewritten records nothing.
+
+**The bear pass cites filings like everyone else.** Each point carries a verbatim quote
+validated against the stored section; what fails is dropped and counted, and the exit
+code is 1 when anything was. What survives attaches to the thesis version it attacked.
+
+**Live on La-Z-Boy, thesis v1 as of 2026-09-23.** Written against the valuation ($19.59 /
+$39.07 / $60.69, price $30.33, implied growth −2.6%) and all 18 findings. Its mispricing
+reason is a housing-linked demand trough with disposals shrinking reported revenue; its
+four falsification conditions are same-store sales below −3% for two consecutive years,
+owner earnings margin below 4% in a year, operating margin below 5% for two years, and
+the company-owned store count falling below 378.
+
+**The bear pass ran with a planted fabrication, to check the validator on real text: 5
+kept, 1 dropped, 17% fabrication rate, exit 1.** The five that survived are the ones that
+matter: the warranty reserve release behind 50bp of the Wholesale SG&A improvement; the
+dealer count halving from "approximately 1,900" to "over 1,000", which is distribution
+lost rather than demand deferred; total written sales up 8% against same-store down 3%;
+capex guidance of "$90 to $110 million for fiscal 2027" against the $63.2M maintenance
+figure the valuation charges; and Joybird's loss widening by more than its impairment.
+The invented point — that management expects demand to recover in fiscal 2027 — was
+dropped as `quote_not_found`, which is the whole design working on live text rather than
+on a fixture.
+
+The journal entry landed outside the checkout, in the per-user data directory, one file
+per entry, fsynced before the command reported success.
+
 ## Next concrete step
 
 **The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`
@@ -433,7 +473,7 @@ public, driven from Claude Code on an existing subscription rather than an API k
 | 4 | Pass A (risk-factor diff) end to end, one company | **gate passed** — 9 findings, 0% fabrication, on a real filer |
 | 3 | Five screens as SQL views + JSON output | **done**, run live over 500 filers |
 | 8 | Valuation engine with bear/base/bull | **done**, run live on La-Z-Boy (CIK 57131) |
-| 9 | Thesis generator + bear pass + journal | **raised** — compounds for a single user |
+| 9 | Thesis generator + bear pass + journal | **done**, run live on La-Z-Boy (CIK 57131) |
 | 10 | Quarterly falsification re-check job | **raised** — the highest-leverage feature |
 | 7 | Passes B, C, D | not started |
 | 5 | FastAPI app: screen index + dossier + filing diff | **deferred** |

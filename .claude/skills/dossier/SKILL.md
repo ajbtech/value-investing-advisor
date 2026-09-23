@@ -62,6 +62,10 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier analyze --pass a --cik N --load F` | Read findings back, validate every quote, store what survives. |
 | `dossier value --cik N --prepare` | Write the valuation's input: the figures, the findings, the fixed rules. |
 | `dossier value --cik N --load F` | Read assumptions back, validate every justification, store the range. |
+| `dossier thesis --cik N --prepare` | Write the thesis input: the valuation and every finding. |
+| `dossier thesis --cik N --load F` | Validate the thesis, append it, write the journal entry. |
+| `dossier thesis --cik N --bear --prepare` / `--load F` | The bear pass: attack the stored thesis, quoting filings. |
+| `dossier thesis --cik N --pass-over "REASON"` | Record a candidate that cleared screening and was passed over. |
 | `dossier status --json` | What the store holds and what work is pending. |
 | `dossier resume --json` | Retry everything pending or failed. |
 
@@ -205,6 +209,35 @@ today's price already implies — that is often the more useful number, because 
 is a mechanical 30% discount to the *bear* case; it is a threshold, not a target and not
 a recommendation. A valuation is an argument with its assumptions attached, so quote the
 justifications when you quote the numbers.
+
+## Writing a thesis, and then attacking it
+
+`dossier thesis --cik N --prepare` needs a stored valuation: the thesis argues from a
+price, rather than reaching for one. It hands you the valuation with its assumptions and
+every finding, and asks for six sections. Three are enforced in code, so write them
+properly rather than discovering the refusal:
+
+- **The mispricing needs a mechanism.** A `reason_type` that is a synonym for "cheap" is
+  rejected, and an explanation containing "the market is wrong" is rejected by name.
+  Name what the market is looking at and what it is missing.
+- **At least two falsification conditions, each with a numeric `threshold`, a
+  `direction` and a `window`.** The quarterly re-check reads these; it cannot read a
+  sentence. Write the ones you would act on, not the ones easy to satisfy.
+- **No recommendations**, in any section.
+
+Revising appends a new version; the old one stays. Then `--bear --prepare` hands the
+thesis to the bear pass, whose points are quote-validated exactly like findings: a point
+whose quote is not in the cited section is dropped and counted, and the exit code is 1
+when anything was. **Report that number** — an unfalsifiable bear case is worth no more
+than an unfalsifiable bull one.
+
+Every load writes a journal entry to the user's journal directory, one file each,
+never inside the repository. Use `--pass-over "reason"` for a candidate that cleared
+screening and was not taken: those entries are what make the journal a record of the
+process rather than of its successes.
+
+When presenting a thesis, give the bear case alongside it, always. It is attached to the
+thesis permanently and quoting only the bull half misrepresents what the store holds.
 
 ## Workflows
 

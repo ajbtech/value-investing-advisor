@@ -17,6 +17,7 @@ from dossier.thesis import (
     load_thesis,
     prepare_bear_pass,
     prepare_thesis,
+    record_pass_over,
     stored_thesis,
 )
 from dossier.valuation import load_valuation
@@ -339,6 +340,26 @@ class TestTheJournal:
         assert entry["cik"] == CIK
         assert entry["prompt_version"] == THESIS_PROMPT
         assert entry["model"] == "claude-opus-5"
+
+    def test_a_candidate_passed_over_is_recorded_too(self, tmp_path):
+        """The passes are where you learn most, and they are what everyone forgets to
+        record. A journal of only the decisions taken describes a different process than
+        the one that was run."""
+        journal = tmp_path / "journal"
+        record_pass_over(
+            journal,
+            cik=56679,
+            as_of="2026-09-22",
+            reason="Named four AI-enabled competitors in its own risk factors.",
+            screens=["magic_formula", "quality_at_price"],
+        )
+        entry = json.loads(next(journal.glob("*.json")).read_text(encoding="utf-8"))
+        assert entry["kind"] == "pass_over"
+        assert entry["screens"] == ["magic_formula", "quality_at_price"]
+
+    def test_a_pass_over_without_a_reason_is_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="reason"):
+            record_pass_over(tmp_path, cik=56679, as_of="2026-09-22", reason="   ")
 
     def test_a_second_decision_does_not_overwrite_the_first(self, valued, tmp_path):
         journal = tmp_path / "journal"
