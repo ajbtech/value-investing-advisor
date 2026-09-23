@@ -18,7 +18,12 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from dossier import __version__
-from dossier.analysis import load_findings, prepare_pass_a, prompt_version_for
+from dossier.analysis import (
+    load_findings,
+    prepare_pass_a,
+    prepare_pass_b,
+    prompt_version_for,
+)
 from dossier.asof import AsOfView, fact_count
 from dossier.config import Config
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
@@ -156,9 +161,12 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
         help="prepare an analysis pass, or load its findings back",
     )
-    analyze.add_argument("--pass", dest="pass_name", default="a", choices=["a"])
+    analyze.add_argument("--pass", dest="pass_name", default="a", choices=["a", "b"])
     analyze.add_argument("--cik", type=int, required=True, metavar="CIK")
-    analyze.add_argument("--item", default="1A", help="the section to compare")
+    analyze.add_argument(
+        "--item",
+        help="the section to read (default: 1A for pass a, 8 for pass b)",
+    )
     analyze.add_argument(
         "--prepare",
         action="store_true",
@@ -886,14 +894,20 @@ def _analyze(args, config: Config) -> int:
         print("dossier analyze: give it --prepare or --load FILE", file=sys.stderr)
         return 2
 
+    # Each pass reads its own section, so the default follows the pass rather than
+    # making every caller remember that footnote forensics means Item 8.
+    item = args.item or ("8" if args.pass_name == "b" else "1A")
+
     with open_store(config.store_path) as conn:
         if args.prepare:
             try:
-                prepared = prepare_pass_a(conn, cik=args.cik, item=args.item)
+                if args.pass_name == "b":
+                    payload = prepare_pass_b(conn, cik=args.cik, item=item)
+                else:
+                    payload = prepare_pass_a(conn, cik=args.cik, item=item).to_dict()
             except ValueError as exc:
                 print(f"dossier analyze: {exc}", file=sys.stderr)
                 return 2
-            payload = prepared.to_dict()
             if args.out:
                 Path(args.out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
                 _say(args.as_json, f"Wrote Pass {args.pass_name} input to {args.out}")
@@ -916,7 +930,7 @@ def _analyze(args, config: Config) -> int:
                 conn,
                 cik=args.cik,
                 payload=findings_payload,
-                item=args.item,
+                item=item,
                 pass_name=args.pass_name,
             )
         except ValueError as exc:
@@ -929,7 +943,7 @@ def _analyze(args, config: Config) -> int:
                 "command": "analyze",
                 "pass": args.pass_name,
                 "cik": args.cik,
-                "prompt_version": prompt_version_for(args.item),
+                "prompt_version": prompt_version_for(item, pass_name=args.pass_name),
                 "kept": result.kept,
                 "dropped": result.dropped,
                 "drop_reasons": result.drop_reasons,

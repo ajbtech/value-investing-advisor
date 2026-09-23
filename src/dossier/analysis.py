@@ -13,6 +13,7 @@ guarantee was never about where the text came from.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -34,6 +35,18 @@ PASS_A_VERSION = "pass_a_v3"
 #: run against instructions written for another section.
 PASS_A_PROMPTS = {"1A": PASS_A_VERSION, "7": "pass_a_mdna_v1"}
 
+#: Pass B is footnote forensics, and the footnotes are Item 8. It is a different job
+#: from Pass A: not how the prose changed, but which accounting choices were made and
+#: which of them moved.
+#: v2 says to match notes by heading rather than by number. The first live run found
+#: Kodak's notes renumbered between years — this year's Note 13 is Guarantees, last
+#: year's was Financial Instruments — and comparing by number would produce a confident
+#: finding about two unrelated disclosures. The four findings from that run stay pinned
+#: to v1, whose words are still in the repository exactly as they were.
+PASS_B_PROMPTS = {"8": "pass_b_v2"}
+
+PASS_PROMPTS = {"a": PASS_A_PROMPTS, "b": PASS_B_PROMPTS}
+
 #: Below this, the extraction is too doubtful to reason over. Analysing a bad parse
 #: produces confident findings about text the filing does not contain — the pass should
 #: refuse rather than launder a broken extraction into a dossier.
@@ -50,15 +63,18 @@ def prompt_text(version: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def prompt_version_for(item: str) -> str:
-    """The Pass A prompt written for this section."""
+def prompt_version_for(item: str, pass_name: str = "a") -> str:
+    """The prompt written for this pass and this section."""
+    prompts = PASS_PROMPTS.get(pass_name)
+    if prompts is None:
+        raise ValueError(f"no pass named {pass_name!r}; the passes are {sorted(PASS_PROMPTS)}")
     try:
-        return PASS_A_PROMPTS[item]
+        return prompts[item]
     except KeyError:
-        known = ", ".join(sorted(PASS_A_PROMPTS))
+        known = ", ".join(sorted(prompts))
         raise ValueError(
-            f"no Pass A prompt for Item {item}. Pass A reads {known}; the footnotes are "
-            "Pass B's job. Running a pass against instructions written for another "
+            f"no Pass {pass_name.upper()} prompt for Item {item}. Pass {pass_name.upper()} "
+            f"reads {known}. Running a pass against instructions written for another "
             "section produces findings about the wrong thing."
         ) from None
 
@@ -175,6 +191,85 @@ def prepare_pass_a(
     )
 
 
+#: "NOTE 17:", "Note 3 — Inventories", "NOTE 4. Debt". Numbered notes only: an unnumbered
+#: heading inside a note is a subheading, and splitting on it would cut a note in half.
+_NOTE_HEADING = re.compile(
+    r"^[ \t]*NOTE[ \t]+(\d{1,2})[ \t]*(?:[:.—–-][ \t]*)?(.{0,90})$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def split_notes(text: str) -> list[dict]:
+    """Break Item 8 into its numbered notes.
+
+    Item 8 runs to 200,000 characters, so handing it over whole is not an option: the
+    pass needs an index it can navigate and the text of the notes it decides to read.
+    A section with no numbered headings — an incorporation-by-reference stub, or a parse
+    that went wrong — comes back as one unnumbered note rather than as nothing, because
+    nothing would look like a filing without footnotes.
+    """
+    matches = list(_NOTE_HEADING.finditer(text))
+    if not matches:
+        body = text.strip()
+        return [{"number": None, "heading": None, "text": body, "char_count": len(body)}]
+
+    notes = []
+    for n, match in enumerate(matches):
+        end = matches[n + 1].start() if n + 1 < len(matches) else len(text)
+        body = text[match.start() : end].strip()
+        notes.append(
+            {
+                "number": match.group(1),
+                "heading": " ".join(match.group(0).split()),
+                "text": body,
+                "char_count": len(body),
+            }
+        )
+    return notes
+
+
+def prepare_pass_b(conn, cik: int, item: str = "8") -> dict:
+    """Pass B's input: this year's notes, split and indexed, with last year's beside them.
+
+    Unlike Pass A this is not a diff, so one filing is enough — but a change of estimate
+    is only visible against the prior year, so the prior notes travel too when they exist.
+    """
+    prompt_version = prompt_version_for(item, pass_name="b")
+    rows = conn.execute(
+        "SELECT d.accession_no FROM document_section d "
+        "JOIN filing f ON f.accession_no = d.accession_no "
+        "WHERE f.cik = ? AND d.item = ? AND f.form_type = '10-K' "
+        "ORDER BY f.filed_date DESC",
+        (cik, item),
+    ).fetchall()
+    if not rows:
+        raise ValueError(
+            f"no extracted Item {item} for CIK {cik}. Run `dossier extract` first; the "
+            "footnotes are what this pass reads."
+        )
+
+    current = _section(conn, rows[0]["accession_no"], item)
+    prior = _section(conn, rows[1]["accession_no"], item) if len(rows) > 1 else None
+
+    index = split_notes(current["text"])
+    return {
+        "cik": cik,
+        "item": item,
+        "pass": "b",
+        "prompt_version": prompt_version,
+        "instructions": prompt_text(prompt_version),
+        "current": current,
+        "prior": prior,
+        "notes": [{k: v for k, v in note.items() if k != "text"} for note in index],
+        "prior_notes": (
+            [{k: v for k, v in note.items() if k != "text"} for note in split_notes(prior["text"])]
+            if prior
+            else []
+        ),
+        "screen": _screen_reason(conn, cik),
+    }
+
+
 @dataclass
 class LoadResult:
     run_key: str
@@ -203,7 +298,7 @@ def load_findings(
     """
     raw = payload.get("findings", [])
     model = payload.get("model")
-    prompt_version = prompt_version_for(item)
+    prompt_version = prompt_version_for(item, pass_name=pass_name)
     run_key = idempotency_key(
         f"pass_{pass_name}", {"cik": cik, "item": item}, prompt_version=prompt_version
     )

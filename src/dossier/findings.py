@@ -23,7 +23,29 @@ MIN_QUOTE_CHARS = 24
 #: Each side of an ellipsis must still carry weight on its own.
 MIN_FRAGMENT_CHARS = 12
 
+#: Pass A reads prose and reports how it changed.
 CHANGE_TYPES = frozenset({"added", "removed", "reordered", "softened", "strengthened"})
+
+#: Pass B reads the footnotes, where the finding is an accounting choice rather than a
+#: change of wording. A depreciation life that was extended is not "softened": it is a
+#: change of estimate, and a list of flags is only worth reading if each one is called
+#: by its name. The plan names these seven; a flag outside the list is still refused,
+#: because "looks bad" is not a category.
+FOOTNOTE_FLAGS = frozenset(
+    {
+        "policy_change",
+        "estimate_change",
+        "capitalisation_change",
+        "related_party",
+        "off_balance_sheet",
+        "pension_assumption",
+        "segment_change",
+    }
+)
+
+#: Either vocabulary is accepted on the way in; which one belongs to which pass is the
+#: prompt's business, and the pass is recorded on the row.
+ALL_FLAGS = CHANGE_TYPES | FOOTNOTE_FLAGS
 SEVERITIES = frozenset({"low", "medium", "high"})
 
 _ELLIPSIS = re.compile(r"\s*(?:\.\.\.|…)\s*")
@@ -138,9 +160,9 @@ class Finding:
     prior_quote: str | None = None
 
     def __post_init__(self) -> None:
-        if self.change_type not in CHANGE_TYPES:
+        if self.change_type not in ALL_FLAGS:
             raise ValueError(
-                f"unknown change_type {self.change_type!r}; expected one of {sorted(CHANGE_TYPES)}"
+                f"unknown change_type {self.change_type!r}; expected one of {sorted(ALL_FLAGS)}"
             )
         if self.severity not in SEVERITIES:
             raise ValueError(
