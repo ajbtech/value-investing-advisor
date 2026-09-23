@@ -184,6 +184,44 @@ class TestPageFooters:
         assert "marketsWe depend" not in text
 
 
+class TestPageNumbers:
+    """Found live in Kodak's 10-K: a bare page number sits between "without supplementing"
+    and "such cash flow from operations", inside one sentence. Left in, an honest quote of
+    that sentence fails the validator and the model is recorded as having fabricated it."""
+
+    def test_a_bare_page_number_does_not_split_a_sentence(self):
+        text = normalise(
+            "<p>Kodak has not consistently generated positive operating cash flows "
+            "without supplementing</p><p>10</p><p>such cash flow from operations with "
+            "financing and monetization transactions.</p>"
+        )
+        assert "without supplementing such cash flow from operations" in text
+
+    def test_a_page_number_followed_by_a_table_of_contents_line_is_one_break(self):
+        """The shape Kodak's filing actually has: the page number and the stray page-jump
+        link both sit between the two halves of the sentence."""
+        text = normalise(
+            "<p>Kodak has not consistently generated positive operating cash flows "
+            "without supplementing</p><p>10</p><p>Table of Contents</p><p>such cash flow "
+            "from operations with financing and monetization transactions.</p>"
+        )
+        assert "without supplementing such cash flow from operations" in text
+        assert "Table of Contents" not in text
+
+    def test_a_number_inside_a_line_is_left_alone(self):
+        """A table row flattens to one line. Only a line that is nothing but a number is
+        page furniture."""
+        text = normalise("<p>Net sales 1,043 998</p><p>11</p><p>Gross profit 210</p>")
+        assert "Net sales 1,043 998" in text
+        assert "Gross profit 210" in text
+
+    def test_a_page_number_between_paragraphs_is_dropped(self):
+        text = normalise("<p>First paragraph ends here.</p><p>12</p><p>Second begins.</p>")
+        assert "\n12\n" not in text
+        assert "First paragraph ends here." in text
+        assert "Second begins." in text
+
+
 class TestItemNumberingEvolves:
     """The SEC added Item 1C (Cybersecurity) to Part I in 2023. A filer whose Item 1B
     now ends at Item 1C rather than Item 2 is following a normal, current filing

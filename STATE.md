@@ -144,12 +144,61 @@ we fully impaired the goodwill and intangible asset related to our businesses in
 United Kingdom" (0000057131-25-000029). In the fiscal 2026 filing the UK is gone from
 Item 1A entirely, and the manufacturing list reads "the United States and Mexico".
 
+**Candidates analysed so far: 4 of 30.** Running totals across all Pass A runs, including
+Apple: **33 findings, 0 dropped, 0% fabrication.**
+
+Reading both Item 1A sections end to end costs tens of thousands of tokens per company.
+Diffing is far cheaper and has found every result so far: compare the risk-factor
+*headings* first, and when those are identical — as they were for Armstrong — run a
+sentence-level diff (`difflib.SequenceMatcher` over sentences) and read only what moved.
+The helper scripts live outside the repo; they are ten lines each and worth rewriting
+rather than carrying.
+
+- **La-Z-Boy (57131)** — 7 findings. Flagged partly on a Piotroski improvement, and the
+  prior-year filing that improvement is measured against records a full impairment of the
+  UK goodwill and intangibles. The UK has since left Item 1A entirely.
+- **Kodak (31235)** — 4 findings, and the screener's own anomaly answered. Flagged at a
+  54.4% owner-earnings yield on $480M of operating cash flow against $-7M the year
+  before. The filing now says Kodak "has not consistently generated positive operating
+  cash flows without supplementing such cash flow from operations with financing and
+  monetization transactions, **such as the KRIP reversion**" — the clause naming the
+  reversion is new this year. The prior filing carried a dedicated risk factor on
+  receiving reversion proceeds from terminating the Kodak Retirement Income Plan, approved
+  by the Board on 2025-01-21; that factor is gone and KRIP now appears once. How much of
+  the $480M is reversion is a cash flow statement question, so it belongs to Pass B.
+  Item 1A was also cut from 94,649 to 67,337 characters and lost its Summary of Risk
+  Factors section, and its ESG risk factor was renamed to sustainability with
+  "intensifying" dropped — the same scrubbing Apple's FY2025 filing showed.
+- **Armstrong World Industries (7431)** — 7 findings. Flagged on a perfect Piotroski 9/9,
+  rank 1 of 195. Its risk-factor headings are identical year over year, so everything is
+  inside the paragraphs: two of its largest distributor customers were acquired by the
+  national home centres it also sells through ("in September 2025, GMS, Inc. ... was
+  acquired by The Home Depot, Inc.", "in October 2025, Foundation Building Materials,
+  Inc. ... was acquired by Lowe's Companies, Inc."), "We may pursue strategic
+  transactions" became "We are likely to", and limited-source supply became "a limited,
+  or single, number of suppliers".
+- **Korn Ferry (56679)** — 6 findings. Flagged Magic Formula rank 1 and quality-at-price.
+  Its named competitor list gains Eightfold AI, LinkedIn, Paradox and Symphony Talent,
+  and it now expects competition "especially" from AI-enabled companies — the company
+  naming entrants against the advantage the quality screen is betting on. Two risk
+  factors were dropped outright (stockholder activism, bank failures), and the Scope 1
+  and 2 emissions goal for 2025 plus the Science-Based Target initiative commitment are
+  gone from the corporate-responsibility factor.
+
+**A pattern worth noting across four unrelated filers.** Apple, Kodak and Korn Ferry all
+removed or genericised explicit ESG language in the same year — Apple dropped "ESG",
+"diversity, equity and inclusion" and "climate change and greenhouse gas emissions",
+Kodak renamed its factor from ESG to sustainability and dropped "intensifying", and Korn
+Ferry deleted its named emissions target. Pass A found each independently; none of these
+is visible in any financial statement.
+
 Next, in rough order of value:
 
-1. **The other 29 candidates.** Each is `dossier extract --cik N` then a Pass A the
+1. **The other 28 candidates.** Each is `dossier extract --cik N` then a Pass A the
    session reads and writes. That is a session's work, not a command, so it is worth
-   doing in batches and watching the fabrication rate across them: one company at 0% is
-   a data point, thirty is a metric.
+   doing in batches and watching the fabrication rate across them: two companies at 0% is
+   a data point, thirty is a metric. Diffing the risk-factor *headings* first is much
+   cheaper than reading both sections end to end, and points straight at what moved.
 2. **Screens as of 12 and 24 months ago, diffed** — the plan's "deliberate addition",
    and unbuilt. A company that has been getting cheaper for two years is a different
    animal from one that fell in this quarter, and the difference routes to different
