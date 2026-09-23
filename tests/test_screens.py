@@ -52,6 +52,73 @@ def by_cik(rows):
     return {row["cik"]: row for row in rows}
 
 
+class TestCapexIsNotOneTag:
+    """Filers migrate XBRL elements and never migrate back. A live run found 83 of 289
+    eligible filers with no annual capital expenditure: American Electric Power last
+    reported `PaymentsToAcquirePropertyPlantAndEquipment` in 2020, MasTec in 2011. They
+    did not stop spending — they started tagging it differently. One hard-coded element
+    silently shrank the owner earnings screen by a third of its universe."""
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "PaymentsToAcquireProductiveAssets",
+            "PaymentsForCapitalImprovements",
+            "PaymentsToAcquireOtherPropertyPlantAndEquipment",
+        ],
+    )
+    def test_an_alternate_capex_element_is_read(self, store, tag):
+        b = StoreBuilder(store)
+        eligible_filer(
+            b, 1, PaymentsToAcquirePropertyPlantAndEquipment=None, **{tag: 60_000_000}
+        )
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(annual_rows(store, 1))[1]["capex"] == 60_000_000
+
+    def test_the_standard_element_still_wins_when_both_are_present(self, store):
+        """A filer reporting both is reporting the same spending twice, under a general
+        element and a specific one. Taking the standard one keeps it comparable."""
+        b = StoreBuilder(store)
+        eligible_filer(b, 1, PaymentsToAcquireProductiveAssets=99_000_000)
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(annual_rows(store, 1))[1]["capex"] == 60_000_000
+
+
+class TestTheScreensSayWhatTheyCouldNotRank:
+    """A screen that ranks 198 of 289 eligible filers is not wrong, but the missing 91
+    are invisible unless it says so. "Rank 3 of 198" reads like the whole universe."""
+
+    def test_a_filer_with_no_capex_is_counted_as_uncovered(self, store):
+        from dossier.screens import build_candidates
+
+        b = StoreBuilder(store)
+        eligible_filer(b, 1)
+        eligible_filer(
+            b, 2, name="No Capex Co", PaymentsToAcquirePropertyPlantAndEquipment=None
+        )
+        b.done()
+        run = build_candidates(store, AS_OF)
+        owner_earnings = run["screens"]["owner_earnings"]
+        assert owner_earnings["missing_data"]["no annual capital expenditure"] == 1
+        assert owner_earnings["eligible"] == 2
+        assert owner_earnings["ranked"] == 1
+
+    def test_a_screen_that_skips_a_filer_by_definition_is_not_a_data_gap(self, store):
+        """Net-net ranks only filers whose net current assets are positive. That is the
+        screen working, and counting it as missing data would cry wolf."""
+        from dossier.screens import build_candidates
+
+        b = StoreBuilder(store)
+        eligible_filer(b, 1)
+        eligible_filer(b, 2, name="Indebted Co", Liabilities=3_000_000_000)
+        b.done()
+        run = build_candidates(store, AS_OF)
+        assert run["screens"]["net_net"]["missing_data"] == {}
+        assert run["screens"]["net_net"]["ranked"] == 1
+
+
 class TestMaterialise:
     def test_a_fact_filed_after_the_as_of_date_is_not_there(self, store):
         b = StoreBuilder(store)

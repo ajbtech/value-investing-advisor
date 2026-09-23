@@ -51,6 +51,10 @@ ANNUAL_TAGS = [
     ("NetIncomeLoss", "USD"),
     ("NetCashProvidedByUsedInOperatingActivities", "USD"),
     ("PaymentsToAcquirePropertyPlantAndEquipment", "USD"),
+    ("PaymentsToAcquireProductiveAssets", "USD"),
+    ("PaymentsForCapitalImprovements", "USD"),
+    ("PaymentsToAcquireOtherPropertyPlantAndEquipment", "USD"),
+    ("PaymentsToAcquireMachineryAndEquipment", "USD"),
     ("DepreciationDepletionAndAmortization", "USD"),
     ("DepreciationAmortizationAndAccretionNet", "USD"),
     ("Assets", "USD"),
@@ -101,6 +105,14 @@ _REVENUE = (
     '"RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet")'
 )
 _COST = 'COALESCE("CostOfRevenue", "CostOfGoodsAndServicesSold")'
+#: In priority order: the standard element first, so a filer reporting both stays
+#: comparable with every other filer, then the alternates real filers migrate to.
+_CAPEX = (
+    'COALESCE("PaymentsToAcquirePropertyPlantAndEquipment", '
+    '"PaymentsToAcquireProductiveAssets", "PaymentsForCapitalImprovements", '
+    '"PaymentsToAcquireOtherPropertyPlantAndEquipment", '
+    '"PaymentsToAcquireMachineryAndEquipment")'
+)
 _EQUITY = (
     'COALESCE("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", '
     '"StockholdersEquity")'
@@ -117,7 +129,7 @@ SELECT cik, fy_end,
   "OperatingIncomeLoss" AS ebit,
   "NetIncomeLoss" AS net_income,
   "NetCashProvidedByUsedInOperatingActivities" AS cfo,
-  "PaymentsToAcquirePropertyPlantAndEquipment" AS capex,
+  {_CAPEX} AS capex,
   COALESCE("DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet")
     AS depreciation,
   "Assets" AS assets,
@@ -555,7 +567,10 @@ def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 #: 3: `first_seen` repaired (migration 007). The job fingerprint counts rows and a
 #: migration edits them, so a data repair has to be announced here or a cached run keeps
 #: serving the answer from before it.
-SCREENER_VERSION = "3"
+#: 4: capital expenditure reads four alternate elements as well as the standard one, and
+#: every screen reports what it could not rank. Both change what a run says, so a cached
+#: answer from before them is the wrong answer.
+SCREENER_VERSION = "4"
 
 #: The plan asks for roughly thirty: enough to be worth analysing, few enough to afford.
 CANDIDATE_LIMIT = 30
@@ -657,6 +672,60 @@ def _complete(conn: sqlite3.Connection, candidate: dict, universe: sqlite3.Row) 
     }
 
 
+#: What each screen needs from the latest fiscal year, and what to call it missing. A
+#: filer is eligible for the universe but unrankable by a given screen when one of these
+#: was not reported; that is a coverage gap, not an exclusion, and the two are different
+#: facts about a run.
+_SCREEN_REQUIRES: dict[str, list[tuple[str, str]]] = {
+    "magic_formula": [
+        ("ebit", "no operating income"),
+        ("current_assets", "no current assets"),
+        ("current_liabilities", "no current liabilities"),
+        ("ppe", "no property, plant and equipment"),
+    ],
+    "net_net": [
+        ("current_assets", "no current assets"),
+        ("liabilities", "no total liabilities"),
+    ],
+    "owner_earnings": [
+        ("cfo", "no operating cash flow"),
+        ("capex", "no annual capital expenditure"),
+    ],
+    "quality_at_price": [
+        ("ebit", "no operating income"),
+        ("cfo", "no operating cash flow"),
+        ("capex", "no annual capital expenditure"),
+    ],
+    "piotroski": [
+        ("cfo", "no operating cash flow"),
+        ("net_income", "no net income"),
+        ("assets", "no total assets"),
+    ],
+}
+
+
+def _coverage(conn: sqlite3.Connection, screen: str) -> dict[str, int]:
+    """How many eligible filers this screen could not rank, counted by what was missing.
+
+    Counted against the first missing figure only, so the totals add up to filers rather
+    than to absences: a filer with neither cash flow nor capex is one filer this screen
+    could not see.
+    """
+    counts: Counter[str] = Counter()
+    columns = _SCREEN_REQUIRES.get(screen, [])
+    if not columns:
+        return {}
+    rows = conn.execute(
+        f"SELECT {', '.join(column for column, _ in columns)} FROM screen_base"
+    ).fetchall()
+    for row in rows:
+        for column, reason in columns:
+            if row[column] is None:
+                counts[reason] += 1
+                break
+    return dict(counts)
+
+
 def _months_before(as_of: date, months: int) -> str:
     """The same day-of-month this many months earlier, clamped to a real date."""
     year, month = as_of.year, as_of.month - months
@@ -737,7 +806,21 @@ def build_candidates(
         rows = screen_rows(conn, screen)
         ranked = sum(1 for row in rows if row["rank"] is not None)
         flagged = [row for row in rows if row["flagged"]]
-        summary[screen] = {"description": description, "ranked": ranked, "flagged": len(flagged)}
+        summary[screen] = {
+            "description": description,
+            "eligible": len(universe) - sum(excluded.values()),
+            "ranked": ranked,
+            "flagged": len(flagged),
+            # "Rank 3 of 198" reads like the whole universe when 289 filers were
+            # eligible. A screen that cannot rank a third of them for want of one
+            # reported figure should say so rather than leave the gap to be inferred.
+            #
+            # Data gaps only. The rest of the difference between `eligible` and `ranked`
+            # is the screen's own definition — net-net skips a filer whose net current
+            # assets are negative, quality-at-price one without seven years of returns —
+            # and that is the screen working, not a hole in the data.
+            "missing_data": _coverage(conn, screen),
+        }
         for row in flagged:
             entry = found.setdefault(row["cik"], {"cik": row["cik"], "flagged_by": []})
             entry["flagged_by"].append(

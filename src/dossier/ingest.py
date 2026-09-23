@@ -60,7 +60,16 @@ SCREEN_TAGS: frozenset[str] = frozenset(
         "NetCashProvidedByUsedInOperatingActivities",
         "NetCashProvidedByUsedInInvestingActivities",
         "NetCashProvidedByUsedInFinancingActivities",
+        # Capital expenditure has no single element, and filers migrate between them and
+        # never migrate back: American Electric Power last used the standard tag in 2020,
+        # MasTec in 2011. Neither stopped spending. Ingesting only the first left 83 of
+        # 289 eligible filers with no capex at all, which silently shrank the owner
+        # earnings screen by a third of its universe.
         "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsToAcquireProductiveAssets",
+        "PaymentsForCapitalImprovements",
+        "PaymentsToAcquireOtherPropertyPlantAndEquipment",
+        "PaymentsToAcquireMachineryAndEquipment",
         "DepreciationDepletionAndAmortization",
         "DepreciationAmortizationAndAccretionNet",
         "ShareBasedCompensation",

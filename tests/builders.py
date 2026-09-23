@@ -87,6 +87,10 @@ class StoreBuilder:
         )
         start = (date.fromisoformat(fy_end) - timedelta(days=364)).isoformat()
         for tag, value in values.items():
+            if value is None:
+                # `Tag=None` means this filer does not report it, which is a different
+                # thing from reporting zero and is what several real filers do.
+                continue
             self.fact(
                 cik,
                 accession,
