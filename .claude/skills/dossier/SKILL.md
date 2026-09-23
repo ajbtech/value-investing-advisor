@@ -56,6 +56,7 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier prices --all --json` | Price every ingested filer that has a ticker. |
 | `dossier screen --as-of YYYY-MM-DD --json` | Run the five screens with only what was knowable on that date. |
 | `dossier screen ... --out candidates.json` | Also write the candidate array alone: the analysis layer's input. |
+| `dossier screen ... --compare 12,24` | Also screen 12 and 24 months earlier and record what changed. |
 | `dossier analyze --pass a --cik N --prepare` | Write Pass A's input: the prompt and both Item 1A sections. |
 | `dossier analyze --pass a --cik N --load F` | Read findings back, validate every quote, store what survives. |
 | `dossier status --json` | What the store holds and what work is pending. |
@@ -103,6 +104,20 @@ keyless chart endpoint, which is unofficial: a `failed` result naming "delisted"
   the metrics), a `flag_reason`, the `price` and `shares` used for market cap with their
   sources, and `inputs`: every reported fact behind the ratios with its `accession_no`
   and `filed_date`.
+
+With `--compare`, each candidate also carries `history` (what the screens said on each
+earlier date, including why it was excluded if it was) and a `trend`:
+
+- `persistent` — flagged at every date. Cheap and staying cheap, which is a different
+  animal from a company that just fell in.
+- `new` — flagged now and at no earlier date. Check `history` before reading anything
+  into it: a filer that was *ineligible* earlier (no price, below the floor) is new to
+  the data, not newly cheap.
+- `returning` — flagged two years ago, not last year, flagged again now.
+- `recent` — flagged last year and now, but not two years ago.
+
+Say which one when presenting a candidate. "Cheap for two years" and "cheap since last
+quarter" lead to different questions, and the analysis prompt is told the difference.
 
 **Read `rank` against `ranked`.** Magic Formula and owner earnings flag their top ten
 *relative to whatever else is in the store*. "Rank 1 of 1" in a store holding one

@@ -17,6 +17,7 @@ date: the gateway is still the only code that reads `fact` or `price`.
 
 from __future__ import annotations
 
+import calendar
 import json
 import sqlite3
 from collections import Counter
@@ -486,13 +487,17 @@ _VIEWS = [
     "owner_earnings",
     "net_net",
     "magic_formula",
-    "screen_base",
     "piotroski",
 ]
 
 #: Materialised once per run, and dropped after the views that read them. Every one of
 #: these is read by several screens, and as views their work was repeated each time.
 _TABLES = ["screen_base", "universe_screened", "shares_latest", "annual", "annual_raw"]
+
+# SQLite refuses DROP VIEW on a table, so a name in both lists breaks the second
+# `prepare` on a connection — which is exactly what running the screens at several
+# dates does.
+assert not set(_VIEWS) & set(_TABLES), "a screen object is either a view or a table"
 
 
 def prepare(conn: sqlite3.Connection, as_of: date | str) -> AsOfView:
@@ -547,7 +552,10 @@ def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 #: Bumped when any screen's arithmetic changes. Part of the screen job's key, so a fixed
 #: screen re-runs rather than serving the old answer from cache.
-SCREENER_VERSION = "2"
+#: 3: `first_seen` repaired (migration 007). The job fingerprint counts rows and a
+#: migration edits them, so a data repair has to be announced here or a cached run keeps
+#: serving the answer from before it.
+SCREENER_VERSION = "3"
 
 #: The plan asks for roughly thirty: enough to be worth analysing, few enough to afford.
 CANDIDATE_LIMIT = 30
@@ -649,8 +657,61 @@ def _complete(conn: sqlite3.Connection, candidate: dict, universe: sqlite3.Row) 
     }
 
 
+def _months_before(as_of: date, months: int) -> str:
+    """The same day-of-month this many months earlier, clamped to a real date."""
+    year, month = as_of.year, as_of.month - months
+    while month <= 0:
+        year, month = year - 1, month + 12
+    day = min(as_of.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day).isoformat()
+
+
+def _snapshot(conn: sqlite3.Connection, as_of: str) -> dict[int, dict]:
+    """What the screens said on one earlier date, per filer."""
+    prepare(conn, as_of)
+    state: dict[int, dict] = {}
+    for row in universe_rows(conn):
+        state[row["cik"]] = {
+            "as_of": as_of,
+            "eligible": row["excluded_because"] is None,
+            "excluded_because": row["excluded_because"],
+            "market_cap": row["market_cap"],
+            "fiscal_year_end": row["latest_fy_end"],
+            "flagged_by": [],
+        }
+    for screen in SCREENS:
+        rows = screen_rows(conn, screen)
+        ranked = sum(1 for row in rows if row["rank"] is not None)
+        for row in rows:
+            if row["flagged"] and row["cik"] in state:
+                state[row["cik"]]["flagged_by"].append(
+                    {"screen": screen, "rank": row["rank"], "ranked": ranked}
+                )
+    return state
+
+
+def _trend(history: list[dict]) -> str | None:
+    """How long this company has been screening well.
+
+    A company that has been cheap and getting cheaper for two years is a different
+    animal from one that fell into the screen this quarter, and that distinction routes
+    to different questions downstream.
+    """
+    if not history:
+        return None
+    flagged = [bool(point["flagged_by"]) for point in history]
+    if all(flagged):
+        return "persistent"
+    if not any(flagged):
+        return "new"
+    return "returning" if flagged[-1] else "recent"
+
+
 def build_candidates(
-    conn: sqlite3.Connection, as_of: date | str, limit: int = CANDIDATE_LIMIT
+    conn: sqlite3.Connection,
+    as_of: date | str,
+    limit: int = CANDIDATE_LIMIT,
+    compare_months: tuple[int, ...] = (),
 ) -> dict:
     """Run all five screens as of a date and assemble the candidate list.
 
@@ -659,6 +720,13 @@ def build_candidates(
     are never blended into one score: which screen surfaced a company is the first
     thing the analysis layer needs to know.
     """
+    # Earlier snapshots come first: every `prepare` rebuilds the TEMP tables, so the
+    # primary date has to be the last one prepared.
+    as_of_date = AsOfView(conn, as_of).as_of
+    earlier = [
+        _snapshot(conn, _months_before(as_of_date, months)) for months in sorted(compare_months)
+    ]
+
     view = prepare(conn, as_of)
     universe = universe_rows(conn)
     excluded = Counter(row["excluded_because"] for row in universe if row["excluded_because"])
@@ -689,8 +757,15 @@ def build_candidates(
         key=lambda c: (-len(c["flagged_by"]), min(f["rank"] for f in c["flagged_by"]), c["cik"]),
     )[:limit]
     by_cik = {row["cik"]: row for row in universe}
+    candidates = [_complete(conn, c, by_cik[c["cik"]]) for c in ordered]
+    for candidate in candidates:
+        history = [point[candidate["cik"]] for point in earlier if candidate["cik"] in point]
+        candidate["history"] = history
+        candidate["trend"] = _trend(history)
+
     return {
         "as_of": view.as_of.isoformat(),
+        "compared_with": [point[next(iter(point))]["as_of"] for point in earlier if point],
         "screener_version": SCREENER_VERSION,
         "universe": {
             "filers": len(universe),
@@ -698,7 +773,7 @@ def build_candidates(
             "excluded": dict(excluded),
         },
         "screens": summary,
-        "candidates": [_complete(conn, c, by_cik[c["cik"]]) for c in ordered],
+        "candidates": candidates,
     }
 
 

@@ -134,6 +134,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="write the candidate array here: the analysis layer's only input",
     )
+    screen.add_argument(
+        "--compare",
+        metavar="MONTHS",
+        help="also screen this many months earlier and record what changed, "
+        "e.g. --compare 12,24. A company cheap for two years is a different animal "
+        "from one that fell in this quarter",
+    )
 
     analyze = subcommands.add_parser(
         "analyze",
@@ -515,11 +522,17 @@ def _screen(args, config: Config) -> int:
     ingesting another filer changes the answer for a date already screened.
     """
     as_of = args.as_of or date.today()
+    try:
+        compare = tuple(int(part) for part in args.compare.split(",")) if args.compare else ()
+    except ValueError:
+        print("dossier screen: --compare takes months, e.g. --compare 12,24", file=sys.stderr)
+        return 2
     with open_store(config.store_path) as conn:
         queue = JobQueue(conn, output_dir=config.output_dir)
         inputs = {
             "as_of": as_of.isoformat(),
             "limit": args.limit,
+            "compare": list(compare),
             "fingerprint": AsOfView(conn, as_of).fingerprint(),
         }
         key = idempotency_key("screen", inputs, prompt_version=SCREENER_VERSION)
@@ -535,7 +548,7 @@ def _screen(args, config: Config) -> int:
                 print("dossier screen: this run has failed too many times", file=sys.stderr)
                 return 1
             try:
-                run = build_candidates(conn, as_of, limit=args.limit)
+                run = build_candidates(conn, as_of, limit=args.limit, compare_months=compare)
                 store_candidates(conn, run)
             except Exception as exc:
                 queue.fail(claimed, f"{type(exc).__name__}: {exc}")
@@ -564,7 +577,8 @@ def _screen(args, config: Config) -> int:
     if run["candidates"]:
         print("Candidates:")
     for candidate in run["candidates"]:
-        print(f"  {candidate['ticker'] or candidate['cik']}: {candidate['flag_reason']}")
+        trend = f"[{candidate['trend']}] " if candidate.get("trend") else ""
+        print(f"  {trend}{candidate['ticker'] or candidate['cik']}: {candidate['flag_reason']}")
     return 0
 
 
