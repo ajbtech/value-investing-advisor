@@ -46,6 +46,8 @@ ANNUAL_TAGS = [
     ("SalesRevenueNet", "USD"),
     ("CostOfRevenue", "USD"),
     ("CostOfGoodsAndServicesSold", "USD"),
+    ("CostOfGoodsSold", "USD"),
+    ("CostOfServices", "USD"),
     ("GrossProfit", "USD"),
     ("OperatingIncomeLoss", "USD"),
     ("NetIncomeLoss", "USD"),
@@ -70,6 +72,11 @@ ANNUAL_TAGS = [
     ("LongTermDebtCurrent", "USD"),
     ("DebtCurrent", "USD"),
     ("PropertyPlantAndEquipmentNet", "USD"),
+    (
+        "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfter"
+        "AccumulatedDepreciationAndAmortization",
+        "USD",
+    ),
     ("WeightedAverageNumberOfSharesOutstandingBasic", "shares"),
     ("WeightedAverageNumberOfDilutedSharesOutstanding", "shares"),
 ]
@@ -104,7 +111,17 @@ _REVENUE = (
     'COALESCE("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", '
     '"RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet")'
 )
-_COST = 'COALESCE("CostOfRevenue", "CostOfGoodsAndServicesSold")'
+_COST = (
+    'COALESCE("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", "CostOfServices")'
+)
+#: Since ASC 842 many filers report property including finance-lease right-of-use assets
+#: under one element rather than `PropertyPlantAndEquipmentNet`. Tangible capital reads
+#: whichever the filer used.
+_PPE = (
+    'COALESCE("PropertyPlantAndEquipmentNet", '
+    '"PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAsset'
+    'AfterAccumulatedDepreciationAndAmortization")'
+)
 #: In priority order: the standard element first, so a filer reporting both stays
 #: comparable with every other filer, then the alternates real filers migrate to.
 _CAPEX = (
@@ -141,7 +158,7 @@ SELECT cik, fy_end,
   COALESCE("LongTermDebtNoncurrent", "LongTermDebt" - COALESCE("LongTermDebtCurrent", 0))
     AS long_term_debt,
   COALESCE("DebtCurrent", "LongTermDebtCurrent") AS current_debt,
-  "PropertyPlantAndEquipmentNet" AS ppe,
+  {_PPE} AS ppe,
   COALESCE("WeightedAverageNumberOfSharesOutstandingBasic",
            "WeightedAverageNumberOfDilutedSharesOutstanding") AS shares_weighted
 FROM annual_raw
@@ -696,10 +713,18 @@ _SCREEN_REQUIRES: dict[str, list[tuple[str, str]]] = {
         ("cfo", "no operating cash flow"),
         ("capex", "no annual capital expenditure"),
     ],
+    # All nine tests must score, so any one missing figure costs the whole filer. Gross
+    # profit is the usual culprit and was missing from this list when it was written,
+    # which made the report understate the very gap it exists to surface.
     "piotroski": [
         ("cfo", "no operating cash flow"),
         ("net_income", "no net income"),
         ("assets", "no total assets"),
+        ("gross_profit", "no gross profit"),
+        ("revenue", "no revenue"),
+        ("current_assets", "no current assets"),
+        ("current_liabilities", "no current liabilities"),
+        ("shares_weighted", "no share count"),
     ],
 }
 

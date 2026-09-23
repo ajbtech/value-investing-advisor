@@ -70,6 +70,14 @@ SCREEN_TAGS: frozenset[str] = frozenset(
         "PaymentsForCapitalImprovements",
         "PaymentsToAcquireOtherPropertyPlantAndEquipment",
         "PaymentsToAcquireMachineryAndEquipment",
+        # Same fragility, three more times. Gross profit was missing for 63 of 289
+        # eligible filers, which cost every one of them a Piotroski score, because a
+        # filer using `CostOfGoodsSold` or `CostOfServices` matched nothing. And since
+        # ASC 842 many filers report property under the finance-lease element rather
+        # than `PropertyPlantAndEquipmentNet`, which cost 53 filers a Magic Formula rank.
+        "CostOfGoodsSold",
+        "CostOfServices",
+        "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization",
         "DepreciationDepletionAndAmortization",
         "DepreciationAmortizationAndAccretionNet",
         "ShareBasedCompensation",
