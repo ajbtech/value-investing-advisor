@@ -33,6 +33,7 @@ from dossier.screens import (
     store_candidates,
 )
 from dossier.store import open_store
+from dossier.valuation import load_valuation, prepare_valuation
 
 #: How far back `dossier prices` fetches by default: enough for the screens to run as of
 #: today, a year ago and two years ago.
@@ -162,6 +163,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument("--out", metavar="FILE", help="write prepared input here")
 
+    valuation = subcommands.add_parser(
+        "value",
+        parents=[common],
+        help="prepare a valuation's input, or load its assumptions back",
+    )
+    valuation.add_argument("--cik", type=int, required=True, metavar="CIK")
+    valuation.add_argument(
+        "--as-of", dest="as_of", metavar="YYYY-MM-DD", help="value as of this date"
+    )
+    valuation.add_argument(
+        "--prepare",
+        action="store_true",
+        help="write the figures, the findings and the fixed rules for a model to read",
+    )
+    valuation.add_argument(
+        "--load",
+        metavar="FILE",
+        help="read assumptions back, validate every justification, and store the range",
+    )
+    valuation.add_argument("--out", metavar="FILE", help="write prepared input here")
+
     subcommands.add_parser(
         "status", parents=[common], help="what is in the store and what work is pending"
     )
@@ -197,6 +219,8 @@ def main(
             return _screen(args, config)
         if args.command == "analyze":
             return _analyze(args, config)
+        if args.command == "value":
+            return _value(args, config)
         if args.command == "status":
             return _status(args, config)
         if args.command == "resume":
@@ -579,6 +603,66 @@ def _screen(args, config: Config) -> int:
     for candidate in run["candidates"]:
         trend = f"[{candidate['trend']}] " if candidate.get("trend") else ""
         print(f"  {trend}{candidate['ticker'] or candidate['cik']}: {candidate['flag_reason']}")
+    return 0
+
+
+def _value(args, config: Config) -> int:
+    """The same two halves as an analysis pass, for the same reason.
+
+    The arithmetic runs here; the assumptions come from a model, as triples with a
+    justification each. Nothing is stored unless every one of them passes.
+    """
+    if not args.prepare and not args.load:
+        print("dossier value: give it --prepare or --load FILE", file=sys.stderr)
+        return 2
+
+    as_of = args.as_of or date.today().isoformat()
+    with open_store(config.store_path) as conn:
+        if args.prepare:
+            try:
+                payload = prepare_valuation(conn, cik=args.cik, as_of=as_of)
+            except ValueError as exc:
+                print(f"dossier value: {exc}", file=sys.stderr)
+                return 2
+            if args.out:
+                Path(args.out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                _say(args.as_json, f"Wrote valuation input to {args.out}")
+            if args.as_json or not args.out:
+                _emit(payload)
+            return 0
+
+        source = Path(args.load)
+        if not source.exists():
+            print(f"dossier value: no such file {source}", file=sys.stderr)
+            return 2
+        try:
+            proposed = json.loads(source.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"dossier value: {source} is not valid JSON — {exc}", file=sys.stderr)
+            return 2
+
+        try:
+            result = load_valuation(conn, cik=args.cik, as_of=as_of, payload=proposed)
+        except ValueError as exc:
+            print(f"dossier value: {exc}", file=sys.stderr)
+            return 2
+
+    if args.as_json:
+        _emit(result)
+    else:
+        price = result["inputs"]["price"]
+        print(f"Valuation of CIK {args.cik} as of {result['as_of']}, per share:")
+        for case in ("bear", "base", "bull"):
+            print(f"  {case:5} ${result[case]['per_share']:,.2f}")
+        print(
+            f"Buy below ${result['buy_below']:,.2f} "
+            f"({result['margin_of_safety']:.0%} below the bear case)"
+        )
+        if price is not None:
+            print(f"Price today ${price:,.2f}")
+            implied = result["implied"]["growth"]
+            if implied is not None:
+                print(f"Today's price implies revenue growth of {implied:.1%} a year")
     return 0
 
 
