@@ -86,6 +86,11 @@ by reason (86 financials, 69 under the $300M floor, 43 without a recent 10-K).
   about 20% apart.
 - **The 500 are the lowest CIKs in the ticker map**, which are the oldest registrants:
   useful for testing, not a representative market.
+- **A screen's `ranked` is not its `eligible`.** Every screen now reports both, plus
+  `missing_data` counting the eligible filers it could not rank for want of a reported
+  figure. Quote `rank` against `ranked` and say what `ranked` was out of: after the tag
+  widening the owner earnings screen sees 269 of 289 eligible filers, Magic Formula 229,
+  and quality-at-price 15 — the last one mostly by its own seven-year definition.
 - **Kodak, flagged at a 54.4% owner-earnings yield, needed a human — and got one.** Its
   FY2025 operating cash flow is $480M against −$7M in 2024 and a −$128M net loss
   (accession 0001193125-26-104214, filed 2026-03-12). The MD&A pass answered it: the
@@ -421,10 +426,45 @@ Live, before any re-ingest (the alternates are not in the store yet):
 definition — it skips filers whose net current assets are negative — and quality-at-price
 ranking 8 is the seven-year ROIC streak doing its job. Conflating the two would cry wolf.
 
-**This needs a re-ingest to take effect.** `INGEST_VERSION` is a hash of the tag set, so
-it changed when the tags did and `dossier ingest --limit 500` will refetch rather than
-skip. That has to run on this machine with `EDGAR_USER_AGENT` set, and `SCREENER_VERSION`
-is now 4 so the cached screen will not be served in the meantime.
+### Re-ingested and measured, 2026-09-23
+
+499 filers refetched (1 cached), **41,827 new facts**, no failures. Same store, same
+as-of date, before and after:
+
+| screen | ranked before | ranked after | biggest gap, before → after |
+| --- | --- | --- | --- |
+| magic_formula | 195 | **229** | no PP&E: 40 → **4** |
+| piotroski | 195 | **196** | no gross profit: 63 → 55 |
+| net_net | 65 | 65 | unchanged, and rightly: its shortfall is definitional |
+| owner_earnings | 198 | **269** | no capex: 76 → **5** |
+| quality_at_price | 8 | **15** | no capex: 64 → **4** |
+
+**Seven of the thirty candidates changed.** Newly flagged: Ford, Dollar General, Masco,
+Lumen, Kelly Services, Ennis, LSB Industries. Pushed out of the top ten by them: Enerpac,
+H&R Block, Flexsteel, Gap, Graco, Tutor Perini, Champion Homes. Ford Motor Company was
+invisible to a US value screener because it does not use
+`PaymentsToAcquirePropertyPlantAndEquipment`.
+
+La-Z-Boy's owner earnings rank moved from 3 of 198 to **6 of 269** — the same company,
+now ranked honestly against a third more competition. Kodak remains 1 of 269. The stored
+run with `--compare 12,24` gives 10 persistent, 9 new, 6 recent, 5 returning, and the
+histories moved too, because the earlier dates were re-screened with the same widened
+tags.
+
+**Still missing: gross profit for 62 eligible filers, 36 of which do report a cost
+element.** American Airlines, American Electric Power, Cheniere, Matson and Howmet
+almost certainly use
+`CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization`, which is a
+different measure from cost of revenue. Adding it is defensible *here specifically*,
+because gross profit feeds only Piotroski's margin test, which compares a filer with its
+own prior year rather than with other filers — so per-filer consistency is what matters
+and cross-filer comparability is not at stake. It needs another full re-ingest, so it
+should be batched with any other tag work rather than run on its own.
+
+**Operating income, missing for 44 filers, is deliberately left alone.** The available
+fallback is pre-tax income plus interest, a different measure, and mixing the two across
+filers would make Magic Formula's ranks incomparable — which is the one thing a ranked
+screen cannot trade away.
 
 ## Next concrete step
 
