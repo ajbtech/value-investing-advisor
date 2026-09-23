@@ -125,7 +125,12 @@ five-hundred-character Item 1A is not.
 There is no API key. Pass A runs in two halves with you in the middle:
 
 1. `dossier analyze --pass a --cik N --prepare --out input.json` — this hands you the
-   prompt and both Item 1A sections.
+   prompt and both Item 1A sections. If the screener flagged this company, the input
+   also carries a `screen` block: which screens, their rank and their metrics. Read it
+   first — the questions worth asking differ for a net-net and a quality compounder.
+   It is context, not a brief: if the filing undercuts the screen's reason, that is the
+   most valuable thing you can report, and a pass that finds what its prompt expected
+   is worth nothing.
 2. **Follow that prompt exactly.** Read both sections, report what changed, and quote
    verbatim from the filing each finding describes. Write the findings to a file in the
    shape the prompt specifies.
@@ -156,6 +161,10 @@ today) after `ingest` and `prices` have run. Report the universe size and exclus
 first, then each candidate's `flag_reason`, citing inputs for any number you repeat.
 Never present a candidate as something to buy: it is a company worth reading about,
 which is what the analysis passes are for.
+
+**"Look into the ones that screened well"** — `dossier screen --json`, then for each
+candidate worth the tokens: `dossier extract --cik N --json`, then Pass A as below.
+Extraction comes first because the analysis reads `document_section`, not filings.
 
 **"What would the screens have said last year?"** — `dossier screen --as-of
 YYYY-MM-DD --json`. Everything is filtered to what was knowable on that date, prices

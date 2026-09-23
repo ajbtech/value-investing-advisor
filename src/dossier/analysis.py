@@ -25,7 +25,7 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 #: Pinned so a result can be traced to the words that produced it. When output shifts,
 #: you need to know whether the world changed or the prompt did.
-PASS_A_VERSION = "pass_a_v1"
+PASS_A_VERSION = "pass_a_v2"
 
 #: Below this, the extraction is too doubtful to reason over. Analysing a bad parse
 #: produces confident findings about text the filing does not contain — the pass should
@@ -53,6 +53,8 @@ class AnalysisInput:
     instructions: str
     current: dict
     prior: dict
+    #: Why the screener surfaced this company, or None if nobody screened it.
+    screen: dict | None = None
     pass_name: str = "a"
 
     def to_dict(self) -> dict:
@@ -76,6 +78,29 @@ def _section(conn, accession_no: str, item: str) -> dict | None:
         (accession_no, item),
     ).fetchone()
     return dict(row) if row else None
+
+
+def _screen_reason(conn, cik: int) -> dict | None:
+    """The most recent screen run that flagged this company, if any.
+
+    The build plan asks for this by name: the model should know whether a company
+    surfaced as a net-net or as a quality compounder, because the interesting questions
+    differ. A company analysed directly was never a candidate, which is not an error.
+    """
+    row = conn.execute(
+        "SELECT as_of, flag_reason, payload FROM candidate WHERE cik = ? "
+        "ORDER BY as_of DESC LIMIT 1",
+        (cik,),
+    ).fetchone()
+    if row is None:
+        return None
+    payload = json.loads(row["payload"])
+    return {
+        "as_of": row["as_of"],
+        "flag_reason": row["flag_reason"],
+        "flagged_by": payload.get("flagged_by", []),
+        "market_cap": payload.get("market_cap"),
+    }
 
 
 def prepare_pass_a(
@@ -120,6 +145,7 @@ def prepare_pass_a(
         instructions=prompt_text(PASS_A_VERSION),
         current=current,
         prior=prior,
+        screen=_screen_reason(conn, cik),
     )
 
 
