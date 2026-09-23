@@ -36,7 +36,7 @@ What works today:
   back and says whether a company has been cheap all along or just fell in.
 - **Pass A**, the risk-factor diff (Item 1A) and the MD&A diff (Item 7), with every
   quoted claim string-matched against the source filing before it is stored. Across five
-  companies and six passes so far: **44 findings, 0 dropped, 0% fabrication.**
+  companies and seven passes so far: **52 findings, 0 dropped, 0% fabrication.**
 
 Not built yet: the valuation engine, the thesis generator and bear pass, the decision
 journal, the quarterly falsification re-check, and Passes B, C and D. `STATE.md` has the

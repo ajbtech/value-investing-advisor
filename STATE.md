@@ -86,10 +86,12 @@ by reason (86 financials, 69 under the $300M floor, 43 without a recent 10-K).
   about 20% apart.
 - **The 500 are the lowest CIKs in the ticker map**, which are the oldest registrants:
   useful for testing, not a representative market.
-- **Kodak, flagged at a 54.4% owner-earnings yield, needs a human.** Its FY2025 operating
-  cash flow is $480M against −$7M in 2024 and a −$128M net loss (accession
-  0001193125-26-104214, filed 2026-03-12). The arithmetic is right; what drove it is a
-  question for Pass B, not for the screener.
+- **Kodak, flagged at a 54.4% owner-earnings yield, needed a human — and got one.** Its
+  FY2025 operating cash flow is $480M against −$7M in 2024 and a −$128M net loss
+  (accession 0001193125-26-104214, filed 2026-03-12). The MD&A pass answered it: the
+  section says the increase was "primarily due to cash proceeds received from Reversion
+  Assets from KRIP of $618 million". The arithmetic was right and the conclusion it
+  invites was wrong, which is the failure mode the analysis layer exists to catch.
 
 ## Milestone 4, and what its live run taught
 
@@ -207,6 +209,32 @@ None of this is visible in Item 1A, and none of it contradicts the Piotroski sco
 says what the score is made of. That is the argument for the pass, tested rather than
 asserted.
 
+**Kodak (CIK 31235), FY2025 vs FY2024 Item 7: 8 findings, 0 dropped, 0% fabrication —
+and the screener's own anomaly is now answered.** Kodak was flagged at a 54.4% owner
+earnings yield on $480M of operating cash flow against −$7M the year before, and
+`STATE.md` had parked "how much of that is the pension reversion" as a Pass B question.
+Item 7 answers it outright: "Net cash from operating activities increased $487 million
+for the year ended December 31, 2025 as compared with the prior year primarily due to
+cash proceeds received from Reversion Assets from KRIP of $618 million ... partially
+offset by a $153 million payment of excise tax on KRIP reversion asset surplus"
+(0001193125-26-104214). The rest of the pass follows the money:
+
+- The surplus settled at **$1.023 billion**, above the prior year's estimated "$750
+  million and $900 million" (0000950170-25-040256), but Kodak kept **$144 million in net
+  cash** "after required debt payments and payment of excise taxes" — below the prior
+  filing's projected "$160 million and $250 million" — plus **$158 million of investment
+  assets** that "are primarily hedge fund investments which are in redemption".
+- $312 million of the proceeds repaid term loans, $153 million paid the excise tax, and
+  a March 2026 amendment "requires the Company to pay $50 million of the Term Loans on or
+  before March 18, 2026 and $50 million on or before June 1, 2026, in each case plus a 1%
+  prepayment fee".
+- In the same filing, the company still describes "plans to return to sustainable
+  positive cash flow" — management's own statement that $480 million is not that.
+
+**This is the clearest case yet for the split the whole design rests on.** The screen's
+arithmetic was correct and the conclusion it invited was wrong. No prompt caught it and
+no ratio could have: one sentence in Item 7 did, and it is quoted, cited and validated.
+
 **Diffing MD&A needs one more step than Item 1A.** A plain sentence diff of the two
 sections was 60,684 characters, because most of MD&A is last year's sentences with this
 year's numbers in them. Masking digits before diffing separates the language changes from
@@ -241,9 +269,9 @@ we fully impaired the goodwill and intangible asset related to our businesses in
 United Kingdom" (0000057131-25-000029). In the fiscal 2026 filing the UK is gone from
 Item 1A entirely, and the manufacturing list reads "the United States and Mexico".
 
-**Candidates analysed so far: 4 of 30**, one of them (La-Z-Boy) over both Item 1A and
-Item 7. Running totals across all Pass A runs, including Apple: **44 findings, 0 dropped,
-0% fabrication.**
+**Candidates analysed so far: 4 of 30**, two of them (La-Z-Boy and Kodak) over both Item
+1A and Item 7. Running totals across all Pass A runs, including Apple: **52 findings, 0
+dropped, 0% fabrication**, over seven passes.
 
 Reading both Item 1A sections end to end costs tens of thousands of tokens per company.
 Diffing is far cheaper and has found every result so far: compare the risk-factor
