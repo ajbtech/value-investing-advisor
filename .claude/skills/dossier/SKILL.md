@@ -58,6 +58,7 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier screen ... --out candidates.json` | Also write the candidate array alone: the analysis layer's input. |
 | `dossier screen ... --compare 12,24` | Also screen 12 and 24 months earlier and record what changed. |
 | `dossier analyze --pass a --cik N --prepare` | Write Pass A's input: the prompt and both Item 1A sections. |
+| `dossier analyze --pass a --cik N --item 7 --prepare` | The same, for the MD&A. Item 1A and Item 7 have a prompt each. |
 | `dossier analyze --pass a --cik N --load F` | Read findings back, validate every quote, store what survives. |
 | `dossier status --json` | What the store holds and what work is pending. |
 | `dossier resume --json` | Retry everything pending or failed. |
@@ -152,6 +153,20 @@ There is no API key. Pass A runs in two halves with you in the middle:
    shape the prompt specifies.
 3. `dossier analyze --pass a --cik N --load findings.json` — every quote is
    string-matched against its source filing. Anything that does not match is dropped.
+
+**Run it over Item 7 as well.** `--item 7` pairs the MD&A and loads a prompt written for
+it; the version travels with the finding, so the two passes stay distinguishable. Item 1A
+is the risks management chose to name, Item 7 is management explaining its own numbers,
+and the second is where a screen's arithmetic gets its account: an unusual year, an
+improvement attributed to a reserve change, a measure whose definition moved. An item
+with no prompt of its own — the footnotes, which are Pass B's job — is refused rather
+than run against instructions written for another section.
+
+Diffing MD&A needs one more step than Item 1A. Most of it is last year's sentences with
+this year's numbers in them, so mask the digits before diffing sentences: what survives
+is the language that changed, and the numeric-only differences are worth a separate,
+much shorter look. On La-Z-Boy that turned 60,000 characters of raw diff into the
+handful of paragraphs that actually moved.
 
 **Expect to be caught, and do not work around it.** If a finding is dropped as
 `quote_not_found`, the quote was not in the filing — re-read and quote exactly, rather

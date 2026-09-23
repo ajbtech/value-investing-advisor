@@ -18,7 +18,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from dossier import __version__
-from dossier.analysis import PASS_A_VERSION, load_findings, prepare_pass_a
+from dossier.analysis import load_findings, prepare_pass_a, prompt_version_for
 from dossier.asof import AsOfView, fact_count
 from dossier.config import Config
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
@@ -618,13 +618,17 @@ def _analyze(args, config: Config) -> int:
             print(f"dossier analyze: {source} is not valid JSON — {exc}", file=sys.stderr)
             return 2
 
-        result = load_findings(
-            conn,
-            cik=args.cik,
-            payload=findings_payload,
-            item=args.item,
-            pass_name=args.pass_name,
-        )
+        try:
+            result = load_findings(
+                conn,
+                cik=args.cik,
+                payload=findings_payload,
+                item=args.item,
+                pass_name=args.pass_name,
+            )
+        except ValueError as exc:
+            print(f"dossier analyze: {exc}", file=sys.stderr)
+            return 2
 
     if args.as_json:
         _emit(
@@ -632,7 +636,7 @@ def _analyze(args, config: Config) -> int:
                 "command": "analyze",
                 "pass": args.pass_name,
                 "cik": args.cik,
-                "prompt_version": PASS_A_VERSION,
+                "prompt_version": prompt_version_for(args.item),
                 "kept": result.kept,
                 "dropped": result.dropped,
                 "drop_reasons": result.drop_reasons,
