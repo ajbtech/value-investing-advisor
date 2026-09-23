@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 #: Bumped when the extractor's behaviour changes. It is part of every extraction job's
 #: idempotency key, so a fixed parser re-extracts rather than serving the old bad parse
 #: from cache — the same reason prompt_version exists for the analysis passes.
-EXTRACTOR_VERSION = "1"
+EXTRACTOR_VERSION = "2"
 
 #: Sections the analysis passes actually read.
 DEFAULT_ITEMS = ("1", "1A", "1B", "2", "7", "7A", "8")
@@ -66,6 +66,18 @@ _TAG = re.compile(r"<[^>]+>")
 #: of every page and is sometimes trailed by a "Table of Contents" line left over from
 #: the page-jump link. Left in, both read as body prose rather than the page furniture
 #: they are.
+#: What a page break leaves behind: a page number on its own line, a stray "Table of
+#: Contents" from the page-jump link, or both together. It breaks sentences in half,
+#: which turns an honest verbatim quote into a failed one. A line that is *only* a
+#: number is furniture; a number inside a line is data (a flattened table row) and
+#: stays. Where the break interrupted a sentence — the line before does not end it and
+#: the line after starts lower-case — the sentence is closed back up.
+_FURNITURE_RUN = r"(?:\n(?:\d{1,4}|Table of Contents)[ \t]*)+\n"
+_PAGE_BREAK_MID_SENTENCE = re.compile(
+    r"(?<=[^\s.;:!?])" + _FURNITURE_RUN + r"(?=[a-z])", re.IGNORECASE
+)
+_PAGE_BREAK = re.compile(_FURNITURE_RUN, re.IGNORECASE)
+
 _PAGE_FOOTER = re.compile(
     r"^[^\n|]{1,80}\|\s*\d{4}\s+Form\s+10-K\s*\|\s*\d+[ \t]*\n(?:[ \t]*Table of Contents[ \t]*\n)?",
     re.IGNORECASE | re.MULTILINE,
@@ -111,6 +123,9 @@ def normalise(raw_html: str) -> str:
     # Contents" line on two adjacent lines, however many paragraph breaks separated
     # them in the source markup, so the pattern below can match reliably.
     text = _PAGE_FOOTER.sub("\n", text)
+    text = _PAGE_BREAK_MID_SENTENCE.sub(" ", text)
+    text = _PAGE_BREAK.sub("\n", text)
+    text = re.sub(r"^\d{1,4}\n|\n\d{1,4}$", "\n", text)
     return re.sub(r"\n{2,}", "\n", text).strip()
 
 

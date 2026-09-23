@@ -144,12 +144,32 @@ we fully impaired the goodwill and intangible asset related to our businesses in
 United Kingdom" (0000057131-25-000029). In the fiscal 2026 filing the UK is gone from
 Item 1A entirely, and the manufacturing list reads "the United States and Mexico".
 
+**Candidates analysed so far: 2 of 30.** Running totals across all Pass A runs, including
+Apple: **20 findings, 0 dropped, 0% fabrication.**
+
+- **La-Z-Boy (57131)** — 7 findings. Flagged partly on a Piotroski improvement, and the
+  prior-year filing that improvement is measured against records a full impairment of the
+  UK goodwill and intangibles. The UK has since left Item 1A entirely.
+- **Kodak (31235)** — 4 findings, and the screener's own anomaly answered. Flagged at a
+  54.4% owner-earnings yield on $480M of operating cash flow against $-7M the year
+  before. The filing now says Kodak "has not consistently generated positive operating
+  cash flows without supplementing such cash flow from operations with financing and
+  monetization transactions, **such as the KRIP reversion**" — the clause naming the
+  reversion is new this year. The prior filing carried a dedicated risk factor on
+  receiving reversion proceeds from terminating the Kodak Retirement Income Plan, approved
+  by the Board on 2025-01-21; that factor is gone and KRIP now appears once. How much of
+  the $480M is reversion is a cash flow statement question, so it belongs to Pass B.
+  Item 1A was also cut from 94,649 to 67,337 characters and lost its Summary of Risk
+  Factors section, and its ESG risk factor was renamed to sustainability with
+  "intensifying" dropped — the same scrubbing Apple's FY2025 filing showed.
+
 Next, in rough order of value:
 
-1. **The other 29 candidates.** Each is `dossier extract --cik N` then a Pass A the
+1. **The other 28 candidates.** Each is `dossier extract --cik N` then a Pass A the
    session reads and writes. That is a session's work, not a command, so it is worth
-   doing in batches and watching the fabrication rate across them: one company at 0% is
-   a data point, thirty is a metric.
+   doing in batches and watching the fabrication rate across them: two companies at 0% is
+   a data point, thirty is a metric. Diffing the risk-factor *headings* first is much
+   cheaper than reading both sections end to end, and points straight at what moved.
 2. **Screens as of 12 and 24 months ago, diffed** — the plan's "deliberate addition",
    and unbuilt. A company that has been getting cheaper for two years is a different
    animal from one that fell in this quarter, and the difference routes to different
