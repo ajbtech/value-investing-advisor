@@ -175,6 +175,75 @@ def add_candidate(conn, as_of="2026-09-22", cik=320193, **overrides):
     return payload
 
 
+def add_section(conn, item, current_text, prior_text, confidence=0.95):
+    """The same filings, with another item extracted from each."""
+    for accession, text in ((CURRENT, current_text), (PRIOR, prior_text)):
+        conn.execute(
+            "INSERT INTO document_section "
+            "(accession_no, item, text, extraction_confidence, char_count) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (accession, item, text, confidence, len(text)),
+        )
+    conn.commit()
+
+
+MDNA_CURRENT = (
+    "Gross margin was 34.1%, compared to 38.2% in the prior year, reflecting higher "
+    "titanium alloy costs which we do not expect to reverse in fiscal 2025. We now "
+    "present adjusted operating income excluding restructuring charges, a measure we "
+    "did not previously report."
+)
+MDNA_PRIOR = (
+    "Gross margin was 38.2%, compared to 37.9% in the prior year. We expect input costs "
+    "to remain stable."
+)
+
+
+class TestPassAOverMDNA:
+    """The plan's Pass A is a risk-factor *and MD&A* diff. Item 7 is extracted and was
+    never paired, and the two sections do not take the same reading: Item 1A is a list of
+    risks management chose to name, Item 7 is management explaining its own numbers."""
+
+    def test_item_7_uses_a_prompt_written_for_mdna(self, store):
+        add_section(store, "7", MDNA_CURRENT, MDNA_PRIOR)
+        prepared = prepare_pass_a(store, cik=320193, item="7")
+        assert prepared.prompt_version != PASS_A_VERSION
+        assert "non-gaap" in prepared.instructions.lower()
+
+    def test_a_finding_records_the_prompt_that_produced_it(self, store):
+        """Storing an MD&A finding under the risk-factor prompt version would break the
+        one thing prompt pinning is for: knowing whether the world changed or the words
+        did."""
+        add_section(store, "7", MDNA_CURRENT, MDNA_PRIOR)
+        expected = prepare_pass_a(store, cik=320193, item="7").prompt_version
+        load_findings(
+            store,
+            cik=320193,
+            item="7",
+            payload={
+                "findings": [
+                    finding(
+                        item="7",
+                        change_type="strengthened",
+                        quote="Gross margin was 34.1%, compared to 38.2% in the prior year",
+                        prior_quote="Gross margin was 38.2%, compared to 37.9% in the prior year",
+                        implication="Gross margin fell four points on input costs.",
+                    )
+                ]
+            },
+        )
+        stored = store.execute("SELECT prompt_version FROM finding").fetchall()
+        assert [row["prompt_version"] for row in stored] == [expected]
+
+    def test_an_item_with_no_prompt_of_its_own_is_refused(self, store):
+        """Item 8 is the footnotes, which is Pass B's job. Falling back to the
+        risk-factor prompt would run a pass whose instructions describe another
+        section."""
+        add_section(store, "8", "Note 1. Summary.", "Note 1. Summary.")
+        with pytest.raises(ValueError, match="no Pass A prompt"):
+            prepare_pass_a(store, cik=320193, item="8")
+
+
 class TestTheScreenReasonReachesThePass:
     """The plan asks for this by name: the model should know whether a company surfaced
     as a net-net or as a quality compounder, because the interesting questions differ."""

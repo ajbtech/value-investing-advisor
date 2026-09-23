@@ -34,9 +34,9 @@ What works today:
   yield, quality-at-price — as SQL over as-of tables, never blended into one score, with
   every exclusion counted by reason. `--compare 12,24` re-runs them a year and two years
   back and says whether a company has been cheap all along or just fell in.
-- **Pass A**, the risk-factor diff, with every quoted claim string-matched against the
-  source filing before it is stored. Across five companies so far: **33 findings, 0
-  dropped, 0% fabrication.**
+- **Pass A**, the risk-factor diff (Item 1A) and the MD&A diff (Item 7), with every
+  quoted claim string-matched against the source filing before it is stored. Across five
+  companies and six passes so far: **44 findings, 0 dropped, 0% fabrication.**
 
 Not built yet: the valuation engine, the thesis generator and bear pass, the decision
 journal, the quarterly falsification re-check, and Passes B, C and D. `STATE.md` has the
@@ -94,7 +94,12 @@ middle:
 uv run dossier analyze --pass a --cik 57131 --prepare --out input.json
 # Claude reads both filings and writes findings.json
 uv run dossier analyze --pass a --cik 57131 --load findings.json
+uv run dossier analyze --pass a --cik 57131 --item 7 --prepare   # ...and the MD&A
 ```
+
+Item 1A and Item 7 have a prompt each, because the two sections are different kinds of
+evidence: Item 1A is the risks management chose to name, Item 7 is management explaining
+its own numbers.
 
 Every quote in `findings.json` is string-matched against the filing it claims to come
 from, and anything that does not match is dropped rather than stored. The exit code is 1

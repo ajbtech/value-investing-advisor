@@ -137,13 +137,8 @@ Both gaps that run exposed are since fixed: the running page-footer is stripped 
 Read the build plan end to end against the code. Most of it is built as written. Six
 places diverge, and they are worth stating rather than discovering later.
 
-1. **Pass A is a risk-factor diff, not the risk-factor *and MD&A* diff the plan
-   specifies.** The prompt is still titled "risk-factor and MD&A diff" and the extractor
-   already stores Item 7 and 7A (`DEFAULT_ITEMS`), so the missing piece is only that
-   `prepare_pass_a` defaults to Item 1A and nothing pairs Item 7. `--item 7` will run it
-   today; nothing has read the result yet, and the prompt's guidance is written for risk
-   factors. The plan calls MD&A part of the highest-value pass, so this is the cheapest
-   real gain available.
+1. ~~**Pass A is a risk-factor diff, not the risk-factor *and MD&A* diff the plan
+   specifies.**~~ — **fixed, see below.**
 2. **Survivorship: the schema is ready, the data is not.** `filer.status` carries
    `deregistered` / `delisted_for_cause` / `acquired`, and ingest is careful never to
    reactivate a filer recorded as failed — but nothing ever *sets* a terminal status, and
@@ -174,7 +169,51 @@ places diverge, and they are worth stating rather than discovering later.
    a pass is reproducible from it alone — but the stage is not database-free, and saying
    so is cheaper than someone later assuming it.
 
-Two things the audit found that are now fixed:
+### Pass A now reads the MD&A too, and it earned its place immediately
+
+Item 1A and Item 7 have a prompt each (`pass_a_v3` and `pass_a_mdna_v1`), the prompt
+version travels with every finding and with the run's idempotency key, and an item with
+no prompt of its own is refused rather than run against instructions written for another
+section — Item 8 is Pass B's job, not Pass A's with the wrong prompt.
+
+**Run live on La-Z-Boy (CIK 57131), FY2026 vs FY2025 Item 7: 11 findings, 0 dropped, 0%
+fabrication.** The company was flagged partly on a Piotroski improvement, and the MD&A
+says where a good deal of fiscal 2026's operating income came from:
+
+- **Joybird's goodwill was impaired by $20.0 million**, in the reporting unit the prior
+  filing described as having "an estimated fair value that exceeds its carrying value by
+  approximately 16%" (0000057131-25-000029). Corporate and Other's operating loss widened
+  by $37.7 million.
+- **The sensitivity analysis behind that cushion is gone.** The prior filing said "using
+  a range of reasonable inputs, the fair value of the Joybird reporting unit exceeded its
+  carrying value for each of the various scenarios analyzed". The unit it described was
+  impaired within the year, and the disclosure is absent from the fiscal 2026 filing.
+- **50 basis points of the Wholesale segment's SG&A improvement is a reserve release** —
+  "lower warranty expense due to a reduction in our warranty liability driven by a change
+  in which we provide external dealers an upfront service allowance" — and **$11.5
+  million of gains on sale-leasebacks and a building sale sit inside operating income**,
+  against consolidated operating income of $129.2 million (0000057131-26-000019).
+- **The dealer count fell from "approximately 1,900 other dealers" to "over 1,000"**, and
+  the form changed from an approximation to a floor.
+- **The same-store sales definition gained an exclusion** — "and excludes the benefit of
+  net new stores and acquired stores" — in a filing reporting total written sales up 8%
+  against written same-store sales down 3%.
+- The UK manufacturing business closed, the Casegoods wholesale business is being sold,
+  the revolver's maturity moved to 2030 and its fixed charge coverage covenant was
+  reduced, and expected capex rose to $90–110 million with distribution transformation
+  named first.
+
+None of this is visible in Item 1A, and none of it contradicts the Piotroski score — it
+says what the score is made of. That is the argument for the pass, tested rather than
+asserted.
+
+**Diffing MD&A needs one more step than Item 1A.** A plain sentence diff of the two
+sections was 60,684 characters, because most of MD&A is last year's sentences with this
+year's numbers in them. Masking digits before diffing separates the language changes from
+the numeric-only ones, and the numeric-only list was 15 pairs. The technique is recorded
+in the skill; the script is ten lines and worth rewriting rather than carrying.
+
+Two other things the audit found that are now fixed:
 
 - **The screen trend never reached the pass.** `--compare` computes `trend` and
   `history`, `store_candidates` writes both into the candidate payload, and
@@ -202,8 +241,9 @@ we fully impaired the goodwill and intangible asset related to our businesses in
 United Kingdom" (0000057131-25-000029). In the fiscal 2026 filing the UK is gone from
 Item 1A entirely, and the manufacturing list reads "the United States and Mexico".
 
-**Candidates analysed so far: 4 of 30.** Running totals across all Pass A runs, including
-Apple: **33 findings, 0 dropped, 0% fabrication.**
+**Candidates analysed so far: 4 of 30**, one of them (La-Z-Boy) over both Item 1A and
+Item 7. Running totals across all Pass A runs, including Apple: **44 findings, 0 dropped,
+0% fabrication.**
 
 Reading both Item 1A sections end to end costs tens of thousands of tokens per company.
 Diffing is far cheaper and has found every result so far: compare the risk-factor
@@ -275,10 +315,9 @@ Next, in rough order of value:
    assumption that rows are only ever added. A migration *edits* them, so the repair did
    not invalidate the cached run and the old answer kept being served. `SCREENER_VERSION`
    is the lever for that, and it is now 3.
-3. **Pass A over Item 7.** Audit item 1: the plan's Pass A is a risk-factor *and MD&A*
-   diff, the extractor already stores Item 7, and nothing pairs it. Cheapest real gain
-   on the list — one prompt written for MD&A, and a run on a filer already analysed so
-   the two passes can be compared.
+3. ~~Pass A over Item 7~~ — **built and run on La-Z-Boy**, above. The other candidates'
+   MD&A is now worth reading alongside their Item 1A, which roughly doubles the work per
+   company and, on the evidence of one filer, more than doubles what it finds.
 4. **A wider universe.** 500 filers by lowest CIK is not the market. `--limit 5000`
    would take roughly an hour and a half of ingest at the SEC's rate limit — or one
    download, if the bulk ZIPs of audit item 3 land first.
