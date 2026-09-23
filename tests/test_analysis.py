@@ -140,6 +140,77 @@ class TestPrepare:
             prepare_pass_a(store, cik=320193, min_confidence=0.6)
 
 
+def add_candidate(conn, as_of="2026-09-22", cik=320193, **overrides):
+    """A candidate row as `dossier screen` writes one."""
+    payload = {
+        "cik": cik,
+        "ticker": "ACME",
+        "name": "Acme Widgets Inc.",
+        "market_cap": 2_000_000_000,
+        "flag_reason": "Net-net: market cap 0.80x net current assets",
+        "flagged_by": [
+            {
+                "screen": "net_net",
+                "label": "Net-net",
+                "rank": 2,
+                "ranked": 59,
+                "metrics": {"net_current_assets": 2.5e9, "price_to_ncav": 0.8},
+                "reason": "Net-net: market cap 0.80x net current assets",
+            }
+        ],
+    }
+    payload.update(overrides)
+    conn.execute(
+        "INSERT INTO candidate (as_of, cik, screener_version, screens, flag_reason, "
+        "payload, created_at) VALUES (?, ?, '2', ?, ?, ?, '2026-09-22T00:00:00+00:00')",
+        (
+            as_of,
+            cik,
+            ",".join(f["screen"] for f in payload["flagged_by"]),
+            payload["flag_reason"],
+            json.dumps(payload),
+        ),
+    )
+    conn.commit()
+    return payload
+
+
+class TestTheScreenReasonReachesThePass:
+    """The plan asks for this by name: the model should know whether a company surfaced
+    as a net-net or as a quality compounder, because the interesting questions differ."""
+
+    def test_the_prepared_input_carries_the_flag_reason(self, store):
+        add_candidate(store)
+        prepared = prepare_pass_a(store, cik=320193)
+        assert prepared.screen["flag_reason"] == "Net-net: market cap 0.80x net current assets"
+
+    def test_it_carries_which_screens_flagged_it_and_their_metrics(self, store):
+        add_candidate(store)
+        screen = prepare_pass_a(store, cik=320193).screen
+        assert [f["screen"] for f in screen["flagged_by"]] == ["net_net"]
+        assert screen["flagged_by"][0]["metrics"]["price_to_ncav"] == 0.8
+        assert screen["as_of"] == "2026-09-22"
+
+    def test_the_most_recent_screen_run_wins(self, store):
+        add_candidate(store, as_of="2025-01-31", flag_reason="older run")
+        add_candidate(store, as_of="2026-09-22", flag_reason="newer run")
+        assert prepare_pass_a(store, cik=320193).screen["flag_reason"] == "newer run"
+
+    def test_a_company_nobody_screened_still_prepares(self, store):
+        """A CIK analysed directly was never a candidate. That is a fact to state, not a
+        reason to refuse the pass."""
+        prepared = prepare_pass_a(store, cik=320193)
+        assert prepared.screen is None
+
+    def test_the_prompt_asks_the_model_to_use_it(self, store):
+        assert "screen" in prompt_text(PASS_A_VERSION).lower()
+
+    def test_it_survives_the_round_trip_to_json(self, store):
+        add_candidate(store)
+        payload = json.loads(json.dumps(prepare_pass_a(store, cik=320193).to_dict()))
+        assert AnalysisInput.from_dict(payload).screen["flag_reason"]
+
+
 class TestLoad:
     def test_stores_a_finding_whose_quotes_verify(self, store):
         result = load_findings(store, cik=320193, payload={"findings": [finding()]})

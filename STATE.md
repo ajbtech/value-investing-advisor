@@ -8,8 +8,10 @@ The build plan lives outside the repo, as a Claude doc:
 
 ## Current milestone
 
-**Milestone 4's gate is passed.** Pass A produced 9 real, quote-validated findings
-against real Apple 10-Ks with 0% fabrication. Deciding what's next — see below.
+**Milestone 3 is built and has run live over 500 filers.** The five screens produced 30
+candidates as of 2026-09-22, and hand-checking them found and fixed two real share-count
+bugs. Milestone 4's gate was passed earlier: Pass A produced 9 quote-validated findings
+against real Apple 10-Ks with 0% fabrication.
 
 ## Done
 
@@ -39,7 +41,57 @@ reads 383,285,000,000 from the original 10-K on 2023-11-03, and reads the restat
 
 - Nothing. Milestone 1 is a clean stopping point.
 
-## Next concrete step
+## Milestone 3, and what the first live screen run taught
+
+`dossier prices` and `dossier screen` are in. 500 filers ingested, 494 priced, screened
+as of 2026-09-22: **289 of 501 filers eligible, 30 candidates**, every exclusion counted
+by reason (86 financials, 69 under the $300M floor, 43 without a recent 10-K).
+
+- **Prices** come from Yahoo's keyless chart endpoint into a `price` table, read only
+  through the as-of gateway, which a second structural test now enforces. Free price
+  sources adjust history for later splits, so a pre-split close is a price that already
+  knows about a split that had not happened; `dossier.prices` undoes it from the split
+  events in the same response. Stooq was tried first and is now behind a JavaScript
+  proof-of-work wall.
+- **The screener is SQL** over TEMP tables the gateway materialises, so no screen reads
+  `fact` or `price` directly. The five screens stay separate and are never blended.
+- **Two share-count bugs the live run exposed, both now fixed with tests.** Company
+  facts omit anything reported per share class, so a multi-class filer's cover-page
+  count can be one class (HEICO: 55M of 139M, which made it look five times cheaper
+  than it is and put it through quality-at-price) or years stale (A. O. Smith's last
+  single count is from 2015, which showed a 16.8% earnings yield instead of 9.0%). 15
+  of 274 eligible filers were affected. The count is now taken from the cover page only
+  if it is under 15 months old and at least 80% of the year's weighted-average basic
+  shares, and otherwise from that weighted average.
+- **A 404 from companyfacts is not a failure.** Ten of the 500 file no XBRL at all; they
+  used to fail and sit in the resume queue retrying what cannot succeed.
+- **Performance.** The shared screen tables are materialised once per run rather than
+  recomputed per screen: a run went from about two minutes to fifteen seconds.
+
+### Known limitations, in the open
+
+- **Ranked screens flag relative to whoever is in the store.** Magic Formula and owner
+  earnings flag their top ten, so their flags mean less in a thin universe. Candidates
+  carry `rank` and `ranked` so this is visible. Piotroski, net-net and quality-at-price
+  flag on absolute thresholds.
+- **Greenblatt's return on capital explodes for asset-light filers.** Korn Ferry shows
+  1869% because its tangible capital is tiny after negative working capital. That is the
+  definition working as written, but it distorts the combined rank.
+- **A filer's ticker may not be its common stock.** EDGAR lists every security, and
+  ingest keeps the first, so a preferred issue (`SCE-PG`) or an exchange-listed bond
+  (`EAI`) can stand in for the common. None reached the eligible universe this run,
+  because other filters caught them first. Nothing detects it yet.
+- **Multi-class filers are priced off one class.** The share count covers every class,
+  but the price is whichever ticker EDGAR listed first, and HEICO's two classes trade
+  about 20% apart.
+- **The 500 are the lowest CIKs in the ticker map**, which are the oldest registrants:
+  useful for testing, not a representative market.
+- **Kodak, flagged at a 54.4% owner-earnings yield, needs a human.** Its FY2025 operating
+  cash flow is $480M against −$7M in 2024 and a −$128M net loss (accession
+  0001193125-26-104214, filed 2026-03-12). The arithmetic is right; what drove it is a
+  question for Pass B, not for the screener.
+
+## Milestone 4, and what its live run taught
 
 **Milestone 4's gate is passed, on a real filer, on a developer machine.** `dossier
 ingest`, `dossier extract` and `dossier analyze` have now all run live against
@@ -77,14 +129,34 @@ concentration ("substantially all... a small number of outsourcing partners, oft
 single locations" → "a significant majority... in addition to sourcing from... the
 U.S."). That is a company-you-know-well result, not confident mush — the gate holds.
 
-**What's actually next:** decide whether Milestone 4's remaining scope (Item 7/MD&A,
-not just Item 1A; more than one company) is worth doing before Milestone 3 (the
-screens), or whether one clean pass on one company is enough proof and it's time to
-move on. Also worth doing at some point, not urgently: fix the running-footer leak in
-`dossier.extract.normalise` (a footer pattern is a normalisable-away thing, the same
-family as script/style stripping) and update `EXPECTED_SUCCESSOR["1B"]` to accept
-`"1C"` without a confidence penalty now that it's a normal, not exceptional, filing
-shape.
+Both gaps that run exposed are since fixed: the running page-footer is stripped in
+`dossier.extract.normalise`, and `EXPECTED_SUCCESSOR` accepts Item 1C after Item 1B.
+
+## Next concrete step
+
+**The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`
+now carries the screen reason (prompt `pass_a_v2`), and the first candidate through the
+whole chain — screen, extract, prepare, analyse, validate — was La-Z-Boy (CIK 57131),
+flagged by three screens. Pass A produced **7 findings, 0 dropped, 0% fabrication**, and
+the screen context earned its place: LZB was flagged partly on a Piotroski improvement,
+and the prior-year filing that improvement is measured against says "During fiscal 2025
+we fully impaired the goodwill and intangible asset related to our businesses in the
+United Kingdom" (0000057131-25-000029). In the fiscal 2026 filing the UK is gone from
+Item 1A entirely, and the manufacturing list reads "the United States and Mexico".
+
+Next, in rough order of value:
+
+1. **The other 29 candidates.** Each is `dossier extract --cik N` then a Pass A the
+   session reads and writes. That is a session's work, not a command, so it is worth
+   doing in batches and watching the fabrication rate across them: one company at 0% is
+   a data point, thirty is a metric.
+2. **Screens as of 12 and 24 months ago, diffed** — the plan's "deliberate addition",
+   and unbuilt. A company that has been getting cheaper for two years is a different
+   animal from one that fell in this quarter, and the difference routes to different
+   prompts.
+3. **A wider universe.** 500 filers by lowest CIK is not the market. `--limit 5000`
+   would take roughly an hour and a half of ingest at the SEC's rate limit.
+4. **Milestone 8, the valuation engine**, which is the next milestone proper.
 
 ## Outstanding, and only you can do it
 
@@ -114,7 +186,7 @@ public, driven from Claude Code on an existing subscription rather than an API k
 | 1 | Job table + EDGAR ingest → SQLite, `filed_date` enforced | **done**, run live on Apple (CIK 320193) |
 | 2 | Section extractor for Item 1A / 7 / footnotes | **validated on 11 real Apple 10-Ks** — one known gap, see below |
 | 4 | Pass A (risk-factor diff) end to end, one company | **gate passed** — 9 findings, 0% fabrication, on a real filer |
-| 3 | Five screens as SQL views + JSON output | after Pass A proves out |
+| 3 | Five screens as SQL views + JSON output | **done**, run live over 500 filers |
 | 8 | Valuation engine with bear/base/bull | not started |
 | 9 | Thesis generator + bear pass + journal | **raised** — compounds for a single user |
 | 10 | Quarterly falsification re-check job | **raised** — the highest-leverage feature |

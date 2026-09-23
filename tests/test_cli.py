@@ -47,6 +47,67 @@ def edgar():
     return EdgarClient(VALID_UA, transport=httpx.MockTransport(handler), sleep=lambda _: None)
 
 
+@pytest.fixture
+def yahoo():
+    """A fake price source that serves the committed Apple chart fixture."""
+    from dossier.prices import YahooPrices
+
+    chart = (FIXTURES / "yahoo_chart_AAPL_2020_split.json").read_text()
+
+    def handler(request):
+        if request.url.path.endswith("/AAPL"):
+            return httpx.Response(200, text=chart, headers={"content-type": "application/json"})
+        return httpx.Response(
+            404, json={"chart": {"result": None, "error": {"description": "No data found"}}}
+        )
+
+    return YahooPrices(transport=httpx.MockTransport(handler), sleep=lambda _: None)
+
+
+class TestPricesCommand:
+    def test_fetches_closes_for_an_ingested_filer(self, data_dir, edgar, yahoo, capsys):
+        main(["ingest", "--cik", "320193"], client=edgar)
+        capsys.readouterr()
+        assert main(["prices", "--cik", "320193", "--json"], prices=yahoo) == 0
+        payload = json.loads(capsys.readouterr().out)
+        result = payload["results"][0]
+        assert result["status"] == "fetched"
+        assert result["ticker"] == "AAPL"
+        assert result["days_inserted"] == 10
+        with open_store(data_dir / "edgar.sqlite") as conn:
+            assert conn.execute("SELECT COUNT(*) FROM price").fetchone()[0] == 10
+
+    def test_a_second_run_the_same_day_is_cached(self, data_dir, edgar, yahoo, capsys):
+        main(["ingest", "--cik", "320193"], client=edgar)
+        main(["prices", "--cik", "320193", "--json"], prices=yahoo)
+        capsys.readouterr()
+        main(["prices", "--cik", "320193", "--json"], prices=yahoo)
+        assert json.loads(capsys.readouterr().out)["results"][0]["status"] == "cached"
+
+    def test_a_filer_not_in_the_store_is_reported_not_fetched(self, data_dir, yahoo, capsys):
+        """Prices hang off a filer row. Ingest comes first, as it does for every stage."""
+        assert main(["prices", "--cik", "320193", "--json"], prices=yahoo) == 1
+        result = json.loads(capsys.readouterr().out)["results"][0]
+        assert result["status"] == "not_ingested"
+
+    def test_a_source_error_fails_that_filer_only(self, data_dir, edgar, yahoo, capsys):
+        main(["ingest", "--cik", "320193"], client=edgar)
+        with open_store(data_dir / "edgar.sqlite") as conn:
+            conn.execute("UPDATE filer SET ticker = 'GONE' WHERE cik = 320193")
+            conn.commit()
+        capsys.readouterr()
+        assert main(["prices", "--cik", "320193", "--json"], prices=yahoo) == 1
+        result = json.loads(capsys.readouterr().out)["results"][0]
+        assert result["status"] == "failed"
+        assert "No data found" in result["error"]
+
+    def test_json_output_is_only_json(self, data_dir, edgar, yahoo, capsys):
+        main(["ingest", "--cik", "320193"], client=edgar)
+        capsys.readouterr()
+        main(["prices", "--cik", "320193", "--json"], prices=yahoo)
+        json.loads(capsys.readouterr().out)
+
+
 class TestHelp:
     def test_bare_invocation_explains_itself(self, capsys):
         assert main([]) == 2
@@ -75,6 +136,42 @@ class TestIngestCommand:
         capsys.readouterr()
         main(["ingest", "--cik", "320193"], client=edgar)
         assert "cached" in capsys.readouterr().out.lower()
+
+    def test_a_filer_with_no_xbrl_facts_is_ingested_not_failed(self, data_dir, capsys):
+        """A failed job sits in the resume queue retrying something that cannot succeed.
+        A filer with no XBRL facts is ingested with none, and the screens' universe then
+        excludes it for too little history, with that reason on the record."""
+        from dossier.edgar import EdgarClient
+
+        submissions = (FIXTURES / "submissions_CIK0000320193.json").read_text()
+
+        def handler(request):
+            if "/submissions/" in str(request.url):
+                return httpx.Response(
+                    200, text=submissions, headers={"content-type": "application/json"}
+                )
+            return httpx.Response(404)
+
+        client = EdgarClient(VALID_UA, transport=httpx.MockTransport(handler), sleep=lambda _: None)
+        assert main(["ingest", "--cik", "320193", "--json"], client=client) == 0
+        result = json.loads(capsys.readouterr().out)["results"][0]
+        assert result["status"] == "ingested"
+        assert result["facts"] == 0
+        with open_store(data_dir / "edgar.sqlite") as conn:
+            assert conn.execute("SELECT status FROM job").fetchone()["status"] == "done"
+
+    def test_widening_the_tag_set_re_runs_instead_of_serving_the_cache(
+        self, data_dir, edgar, capsys, monkeypatch
+    ):
+        """A completed ingest is only valid for the tags it fetched. Add a tag and every
+        filer ingested before it would silently never get that tag."""
+        import dossier.cli
+
+        main(["ingest", "--cik", "320193"], client=edgar)
+        capsys.readouterr()
+        monkeypatch.setattr(dossier.cli, "INGEST_VERSION", "a-wider-tag-set")
+        main(["ingest", "--cik", "320193"], client=edgar)
+        assert "cached" not in capsys.readouterr().out.lower()
 
     def test_force_re_runs_a_completed_job(self, data_dir, edgar, capsys):
         main(["ingest", "--cik", "320193"], client=edgar)

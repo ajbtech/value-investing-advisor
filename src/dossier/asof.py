@@ -56,6 +56,25 @@ class Fact:
 
 
 @dataclass(frozen=True)
+class Price:
+    cik: int
+    ticker: str
+    price_date: str
+    close: float
+    source: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> Price:
+        return cls(
+            cik=row["cik"],
+            ticker=row["ticker"],
+            price_date=row["price_date"],
+            close=row["close"],
+            source=row["source"],
+        )
+
+
+@dataclass(frozen=True)
 class Filer:
     cik: int
     name: str
@@ -133,6 +152,118 @@ class AsOfView:
                 continue
             latest[(fact.tag, fact.unit, fact.period_start, fact.period_end)] = fact
         return sorted(latest.values(), key=lambda f: (f.tag, f.period_end))
+
+    # -- prices --------------------------------------------------------------
+
+    def price(self, cik: int) -> Price | None:
+        """The last close on or before the as-of date.
+
+        The caller sees `price_date`, so a stale price — a filer that stopped trading —
+        is visible as stale rather than silently standing in for today's.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM price WHERE cik = ? AND price_date <= ? "
+            "ORDER BY price_date DESC LIMIT 1",
+            (cik, self._as_of),
+        ).fetchone()
+        return Price.from_row(row) if row else None
+
+    def fingerprint(self) -> dict[str, int]:
+        """How much of the store was visible as of this date.
+
+        Rows are only ever added, never edited, so matching counts mean the same as-of
+        state. Ingesting a new filer adds rows dated long before today, which is why a
+        screen run is keyed on this and not on the date alone.
+        """
+
+        def count(sql: str, *params) -> int:
+            return self.conn.execute(sql, params).fetchone()[0]
+
+        return {
+            "facts": count("SELECT COUNT(*) FROM fact WHERE filed_date <= ?", self._as_of),
+            "prices": count("SELECT COUNT(*) FROM price WHERE price_date <= ?", self._as_of),
+            "filings": count("SELECT COUNT(*) FROM filing WHERE filed_date <= ?", self._as_of),
+            "filers": len(self.universe()),
+        }
+
+    # -- materialised state, for SQL ----------------------------------------
+
+    def materialise(self) -> None:
+        """Write this view's state of knowledge into TEMP tables for SQL to read.
+
+        The screens are SQL, and a view defined on `fact` directly would be a second
+        read path. So the gateway does the filtering once, here, and the screens read
+        only the result:
+
+        - `fact_asof`: one row per (cik, tag, unit, period), the latest version filed
+          on or before the as-of date.
+        - `price_asof`: each filer's last close on or before the as-of date.
+        - `filing_asof`: filings filed on or before the as-of date.
+        - `universe_asof`: filers that were filing and had not failed by then.
+        - `asof_param`: the date itself, for views that need it.
+
+        TEMP tables belong to this connection alone and vanish when it closes.
+        """
+        placeholders = ", ".join("?" for _ in TERMINAL_STATUSES)
+        statements = [
+            ("DROP TABLE IF EXISTS temp.asof_param", ()),
+            ("DROP TABLE IF EXISTS temp.fact_asof", ()),
+            ("DROP TABLE IF EXISTS temp.price_asof", ()),
+            ("DROP TABLE IF EXISTS temp.filing_asof", ()),
+            ("DROP TABLE IF EXISTS temp.universe_asof", ()),
+            ("CREATE TEMP TABLE asof_param AS SELECT ? AS as_of", (self._as_of,)),
+            (
+                """
+                CREATE TEMP TABLE fact_asof AS
+                SELECT cik, tag, unit, period_start, period_end, value, filed_date,
+                       accession_no, form_type
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY cik, tag, unit, period_start, period_end
+                        ORDER BY filed_date DESC, accession_no DESC
+                    ) AS version
+                    FROM fact WHERE filed_date <= ?
+                )
+                WHERE version = 1
+                """,
+                (self._as_of,),
+            ),
+            ("CREATE INDEX temp.fact_asof_period ON fact_asof (cik, period_end)", ()),
+            (
+                """
+                CREATE TEMP TABLE price_asof AS
+                SELECT cik, ticker, price_date, close, source
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY cik ORDER BY price_date DESC
+                    ) AS recency
+                    FROM price WHERE price_date <= ?
+                )
+                WHERE recency = 1
+                """,
+                (self._as_of,),
+            ),
+            (
+                "CREATE TEMP TABLE filing_asof AS SELECT * FROM filing WHERE filed_date <= ?",
+                (self._as_of,),
+            ),
+            (
+                f"""
+                CREATE TEMP TABLE universe_asof AS
+                SELECT * FROM filer
+                WHERE (first_seen IS NULL OR first_seen <= ?)
+                  AND (
+                        status NOT IN ({placeholders})
+                        OR status_date IS NULL
+                        OR status_date > ?
+                      )
+                """,
+                (self._as_of, *TERMINAL_STATUSES, self._as_of),
+            ),
+        ]
+        with self.conn:
+            for sql, params in statements:
+                self.conn.execute(sql, params)
 
     # -- filings -------------------------------------------------------------
 

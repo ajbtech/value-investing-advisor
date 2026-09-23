@@ -10,6 +10,7 @@ Ingest only writes. Reads go through `dossier.asof`.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -24,6 +25,7 @@ SCREEN_TAGS: frozenset[str] = frozenset(
         "RevenueFromContractWithCustomerIncludingAssessedTax",
         "SalesRevenueNet",
         "CostOfRevenue",
+        "CostOfGoodsAndServicesSold",
         "GrossProfit",
         "OperatingIncomeLoss",
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
@@ -49,6 +51,7 @@ SCREEN_TAGS: frozenset[str] = frozenset(
         "Goodwill",
         "IntangibleAssetsNetExcludingGoodwill",
         "LongTermDebtNoncurrent",
+        "LongTermDebt",
         "LongTermDebtCurrent",
         "DebtCurrent",
         "OperatingLeaseLiabilityNoncurrent",
@@ -70,6 +73,19 @@ SCREEN_TAGS: frozenset[str] = frozenset(
         "EntityCommonStockSharesOutstanding",
     }
 )
+
+
+def tags_version(tags) -> str:
+    """A short fingerprint of a tag set, for the ingest job's idempotency key.
+
+    A completed ingest is only complete for the tags it fetched. Keying on the tag set
+    means widening it re-runs ingest for every filer instead of serving a cache that
+    predates the new tags.
+    """
+    return hashlib.sha256("\n".join(sorted(tags)).encode("utf-8")).hexdigest()[:12]
+
+
+INGEST_VERSION = tags_version(SCREEN_TAGS)
 
 
 @dataclass(frozen=True)

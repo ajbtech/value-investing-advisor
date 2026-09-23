@@ -178,6 +178,22 @@ class TestThereIsNoOtherReadPath:
         ]
         assert offenders == []
 
+    def test_no_module_outside_the_gateway_reads_the_price_table(self):
+        """Prices carry the same lookahead risk as facts, so they get the same rule."""
+        import re
+        from pathlib import Path
+
+        import dossier
+
+        package = Path(dossier.__file__).parent
+        offenders = [
+            path.name
+            for path in package.rglob("*.py")
+            if path.name != "asof.py"
+            and re.search(r"\bfrom\s+price\b", path.read_text(encoding="utf-8"), re.IGNORECASE)
+        ]
+        assert offenders == []
+
 
 def _one_day():
     from datetime import timedelta

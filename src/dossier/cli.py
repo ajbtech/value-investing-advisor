@@ -14,17 +14,29 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 from dossier import __version__
 from dossier.analysis import PASS_A_VERSION, load_findings, prepare_pass_a
-from dossier.asof import fact_count
+from dossier.asof import AsOfView, fact_count
 from dossier.config import Config
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
 from dossier.extract import EXTRACTOR_VERSION, extract_filing
-from dossier.ingest import ingest_filer
+from dossier.ingest import INGEST_VERSION, ingest_filer
 from dossier.jobs import JobQueue, idempotency_key
+from dossier.prices import YahooPrices, store_prices
+from dossier.screens import (
+    CANDIDATE_LIMIT,
+    SCREENER_VERSION,
+    build_candidates,
+    store_candidates,
+)
 from dossier.store import open_store
+
+#: How far back `dossier prices` fetches by default: enough for the screens to run as of
+#: today, a year ago and two years ago.
+DEFAULT_PRICE_HISTORY_DAYS = 3 * 366
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,6 +90,51 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--limit", type=int, help="stop after this many filings")
     extract.add_argument("--force", action="store_true", help="re-extract filings already done")
 
+    prices = subcommands.add_parser(
+        "prices",
+        parents=[common],
+        help="fetch daily closes for ingested filers, split adjustment undone",
+    )
+    prices.add_argument(
+        "--cik",
+        action="append",
+        type=int,
+        default=[],
+        metavar="CIK",
+        help="a filer to price; repeatable",
+    )
+    prices.add_argument(
+        "--all", action="store_true", help="price every ingested filer that has a ticker"
+    )
+    prices.add_argument(
+        "--since",
+        type=date.fromisoformat,
+        help="earliest date to fetch (default: three years ago)",
+    )
+
+    screen = subcommands.add_parser(
+        "screen",
+        parents=[common],
+        help="run the five screens as of a date and list the candidates",
+    )
+    screen.add_argument(
+        "--as-of",
+        type=date.fromisoformat,
+        metavar="YYYY-MM-DD",
+        help="screen with only what was knowable on this date (default: today)",
+    )
+    screen.add_argument(
+        "--limit",
+        type=int,
+        default=CANDIDATE_LIMIT,
+        help=f"most candidates to list (default: {CANDIDATE_LIMIT})",
+    )
+    screen.add_argument(
+        "--out",
+        metavar="FILE",
+        help="write the candidate array here: the analysis layer's only input",
+    )
+
     analyze = subcommands.add_parser(
         "analyze",
         parents=[common],
@@ -107,7 +164,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None, *, client: EdgarClient | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    client: EdgarClient | None = None,
+    prices: YahooPrices | None = None,
+) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
@@ -122,6 +184,10 @@ def main(argv: list[str] | None = None, *, client: EdgarClient | None = None) ->
             return _ingest(args, config, client)
         if args.command == "extract":
             return _extract(args, config, client)
+        if args.command == "prices":
+            return _prices(args, config, prices)
+        if args.command == "screen":
+            return _screen(args, config)
         if args.command == "analyze":
             return _analyze(args, config)
         if args.command == "status":
@@ -156,14 +222,14 @@ def _client(client: EdgarClient | None) -> EdgarClient:
 def _ingest_one(queue: JobQueue, conn, edgar: EdgarClient, cik: int, force: bool) -> dict:
     """Ingest one filer as one job. Returns a structured result for either output mode."""
     inputs = {"cik": cik}
-    key = idempotency_key("ingest_filer", inputs)
+    key = idempotency_key("ingest_filer", inputs, prompt_version=INGEST_VERSION)
     result: dict = {"cik": cik, "status": None, "error": None}
 
     if queue.completed(key) is not None and not force:
         result["status"] = "cached"
         return result
 
-    job = queue.enqueue("ingest_filer", inputs)
+    job = queue.enqueue("ingest_filer", inputs, prompt_version=INGEST_VERSION)
     if force and job.status == "done":
         queue.reopen(job)
     claimed = queue.claim_by_key(key)
@@ -341,6 +407,165 @@ def _extract(args, config: Config, client: EdgarClient | None) -> int:
             }
         )
     return 1 if failures else 0
+
+
+def _prices_one(
+    queue: JobQueue, conn, source: YahooPrices, cik: int, since: date, through: date
+) -> dict:
+    """Price one filer as one job.
+
+    Unlike a filing, a price history grows every trading day, so the job is keyed by the
+    day it runs through: re-running the same day is a cache hit, the next day is not.
+    """
+    result: dict = {"cik": cik, "ticker": None, "status": None, "error": None}
+    filer = conn.execute("SELECT ticker FROM filer WHERE cik = ?", (cik,)).fetchone()
+    if filer is None:
+        result["status"] = "not_ingested"
+        result["error"] = "run `dossier ingest` for this filer first"
+        return result
+    ticker = filer["ticker"]
+    result["ticker"] = ticker
+    if not ticker:
+        # Nothing to retry until ingest supplies a ticker, so this is not a failure.
+        result["status"] = "no_ticker"
+        return result
+
+    inputs = {
+        "cik": cik,
+        "ticker": ticker,
+        "since": since.isoformat(),
+        "through": through.isoformat(),
+    }
+    key = idempotency_key("fetch_prices", inputs)
+    if queue.completed(key) is not None:
+        result["status"] = "cached"
+        return result
+
+    queue.enqueue("fetch_prices", inputs)
+    claimed = queue.claim_by_key(key)
+    if claimed is None:
+        result["status"] = "skipped"
+        result["error"] = "too many failed attempts"
+        return result
+
+    try:
+        points = source.daily(ticker, since, through)
+        inserted = store_prices(conn, cik, ticker, points)
+    except Exception as exc:  # one bad ticker must not cost the rest
+        queue.fail(claimed, f"{type(exc).__name__}: {exc}")
+        result["status"] = "failed"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
+
+    latest = max((p.price_date for p in points), default=None)
+    queue.finish(claimed, json.dumps({"days": len(points), "inserted": inserted, "latest": latest}))
+    result.update(status="fetched", days=len(points), days_inserted=inserted, latest=latest)
+    return result
+
+
+def _prices(args, config: Config, source: YahooPrices | None) -> int:
+    through = date.today()
+    since = args.since or through - timedelta(days=DEFAULT_PRICE_HISTORY_DAYS)
+    results = []
+    with open_store(config.store_path) as conn:
+        ciks = list(args.cik)
+        if args.all:
+            ciks += [
+                row["cik"]
+                for row in conn.execute(
+                    "SELECT cik FROM filer WHERE ticker IS NOT NULL ORDER BY cik"
+                )
+            ]
+        if not ciks:
+            print("dossier prices: give it --cik or --all", file=sys.stderr)
+            return 2
+
+        owned = source is None
+        source = source or YahooPrices()
+        try:
+            queue = JobQueue(conn, output_dir=config.output_dir)
+            _say(args.as_json, f"Pricing {len(ciks)} filer(s) since {since}")
+            for cik in dict.fromkeys(ciks):
+                result = _prices_one(queue, conn, source, cik, since, through)
+                results.append(result)
+                _say(args.as_json, f"  {cik}: {result['status']}")
+        finally:
+            if owned:
+                source.close()
+
+    failures = sum(1 for r in results if r["status"] in ("failed", "skipped", "not_ingested"))
+    if args.as_json:
+        _emit(
+            {
+                "command": "prices",
+                "since": since.isoformat(),
+                "through": through.isoformat(),
+                "requested": len(results),
+                "failures": failures,
+                "results": results,
+            }
+        )
+    return 1 if failures else 0
+
+
+def _screen(args, config: Config) -> int:
+    """Screen as of a date, as one job.
+
+    The job is keyed on the date *and* on how much of the store was visible by then:
+    ingesting another filer changes the answer for a date already screened.
+    """
+    as_of = args.as_of or date.today()
+    with open_store(config.store_path) as conn:
+        queue = JobQueue(conn, output_dir=config.output_dir)
+        inputs = {
+            "as_of": as_of.isoformat(),
+            "limit": args.limit,
+            "fingerprint": AsOfView(conn, as_of).fingerprint(),
+        }
+        key = idempotency_key("screen", inputs, prompt_version=SCREENER_VERSION)
+        cached = queue.completed(key)
+        if cached is not None:
+            run = json.loads(cached.read_output())
+            store_candidates(conn, run)
+            status = "cached"
+        else:
+            queue.enqueue("screen", inputs, prompt_version=SCREENER_VERSION)
+            claimed = queue.claim_by_key(key)
+            if claimed is None:
+                print("dossier screen: this run has failed too many times", file=sys.stderr)
+                return 1
+            try:
+                run = build_candidates(conn, as_of, limit=args.limit)
+                store_candidates(conn, run)
+            except Exception as exc:
+                queue.fail(claimed, f"{type(exc).__name__}: {exc}")
+                print(f"dossier screen: {type(exc).__name__}: {exc}", file=sys.stderr)
+                return 1
+            queue.finish(claimed, json.dumps(run, default=str))
+            status = "screened"
+
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps(run["candidates"], indent=2, default=str), encoding="utf-8"
+        )
+    if args.as_json:
+        _emit({"command": "screen", "status": status, **run})
+        return 0
+
+    universe = run["universe"]
+    print(
+        f"Screened as of {run['as_of']} ({status}): "
+        f"{universe['eligible']} of {universe['filers']} filers eligible"
+    )
+    for reason, count in sorted(universe["excluded"].items(), key=lambda item: -item[1]):
+        print(f"  excluded, {reason}: {count}")
+    for screen, counts in run["screens"].items():
+        print(f"  {screen}: {counts['flagged']} flagged of {counts['ranked']} ranked")
+    if run["candidates"]:
+        print("Candidates:")
+    for candidate in run["candidates"]:
+        print(f"  {candidate['ticker'] or candidate['cik']}: {candidate['flag_reason']}")
+    return 0
 
 
 def _analyze(args, config: Config) -> int:

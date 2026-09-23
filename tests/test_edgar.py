@@ -246,6 +246,19 @@ class TestFetching:
         client.company_facts(320193)
         assert seen["url"] == "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
 
+    def test_a_filer_with_no_xbrl_facts_is_none_not_an_error(self):
+        """Plenty of registrants file no XBRL financials at all, and EDGAR answers 404.
+        That is a fact about the filer, not a failed request."""
+        client = EdgarClient(VALID_UA, transport=always(status=404), sleep=lambda _: None)
+        assert client.company_facts(18748) is None
+
+    def test_other_errors_from_company_facts_still_raise(self):
+        client = EdgarClient(
+            VALID_UA, transport=always(status=500), sleep=lambda _: None, max_retries=1
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            client.company_facts(320193)
+
     def test_submissions_url_is_zero_padded(self):
         seen = {}
 
