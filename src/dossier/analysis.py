@@ -25,7 +25,7 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 #: Pinned so a result can be traced to the words that produced it. When output shifts,
 #: you need to know whether the world changed or the prompt did.
-PASS_A_VERSION = "pass_a_v2"
+PASS_A_VERSION = "pass_a_v3"
 
 #: Below this, the extraction is too doubtful to reason over. Analysing a bad parse
 #: produces confident findings about text the filing does not contain — the pass should
@@ -100,6 +100,11 @@ def _screen_reason(conn, cik: int) -> dict | None:
         "flag_reason": row["flag_reason"],
         "flagged_by": payload.get("flagged_by", []),
         "market_cap": payload.get("market_cap"),
+        # From `screen --compare`. The trend is a label over the history, so both travel
+        # together: "new" means nothing on its own when the company was merely ineligible
+        # a year ago, and only the history says which it was.
+        "trend": payload.get("trend"),
+        "history": payload.get("history", []),
     }
 
 

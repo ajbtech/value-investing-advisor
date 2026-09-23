@@ -191,6 +191,33 @@ class TestTheScreenReasonReachesThePass:
         assert screen["flagged_by"][0]["metrics"]["price_to_ncav"] == 0.8
         assert screen["as_of"] == "2026-09-22"
 
+    def test_it_carries_the_trend_and_the_history_behind_it(self, store):
+        """`--compare` decides whether a company has been cheap for two years or just
+        fell in, and the plan routes that distinction to the prompt. Carrying the trend
+        without the history would be a label the model cannot check: Flexsteel reads as
+        `new` because it was ineligible earlier, not because it newly became cheap."""
+        history = [
+            {"as_of": "2025-09-22", "flagged_by": [], "excluded": "no recent price"},
+            {"as_of": "2024-09-22", "flagged_by": [], "excluded": "no recent price"},
+        ]
+        add_candidate(store, trend="new", history=history)
+        screen = prepare_pass_a(store, cik=320193).screen
+        assert screen["trend"] == "new"
+        assert [point["excluded"] for point in screen["history"]] == [
+            "no recent price",
+            "no recent price",
+        ]
+
+    def test_a_candidate_screened_without_compare_has_no_trend(self, store):
+        """`--compare` is optional, and its absence is not a missing value to invent."""
+        add_candidate(store)
+        screen = prepare_pass_a(store, cik=320193).screen
+        assert screen["trend"] is None
+        assert screen["history"] == []
+
+    def test_the_prompt_explains_what_a_trend_means(self, store):
+        assert "persistent" in prompt_text(PASS_A_VERSION).lower()
+
     def test_the_most_recent_screen_run_wins(self, store):
         add_candidate(store, as_of="2025-01-31", flag_reason="older run")
         add_candidate(store, as_of="2026-09-22", flag_reason="newer run")

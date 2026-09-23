@@ -141,7 +141,8 @@ There is no API key. Pass A runs in two halves with you in the middle:
 
 1. `dossier analyze --pass a --cik N --prepare --out input.json` — this hands you the
    prompt and both Item 1A sections. If the screener flagged this company, the input
-   also carries a `screen` block: which screens, their rank and their metrics. Read it
+   also carries a `screen` block: which screens, their rank and their metrics, and —
+   when that run used `--compare` — the `trend` and the `history` behind it. Read it
    first — the questions worth asking differ for a net-net and a quality compounder.
    It is context, not a brief: if the filing undercuts the screen's reason, that is the
    most valuable thing you can report, and a pass that finds what its prompt expected

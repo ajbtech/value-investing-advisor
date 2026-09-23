@@ -132,6 +132,64 @@ U.S."). That is a company-you-know-well result, not confident mush — the gate 
 Both gaps that run exposed are since fixed: the running page-footer is stripped in
 `dossier.extract.normalise`, and `EXPECTED_SUCCESSOR` accepts Item 1C after Item 1B.
 
+## The plan, checked against what exists (2026-09-22)
+
+Read the build plan end to end against the code. Most of it is built as written. Six
+places diverge, and they are worth stating rather than discovering later.
+
+1. **Pass A is a risk-factor diff, not the risk-factor *and MD&A* diff the plan
+   specifies.** The prompt is still titled "risk-factor and MD&A diff" and the extractor
+   already stores Item 7 and 7A (`DEFAULT_ITEMS`), so the missing piece is only that
+   `prepare_pass_a` defaults to Item 1A and nothing pairs Item 7. `--item 7` will run it
+   today; nothing has read the result yet, and the prompt's guidance is written for risk
+   factors. The plan calls MD&A part of the highest-value pass, so this is the cheapest
+   real gain available.
+2. **Survivorship: the schema is ready, the data is not.** `filer.status` carries
+   `deregistered` / `delisted_for_cause` / `acquired`, and ingest is careful never to
+   reactivate a filer recorded as failed — but nothing ever *sets* a terminal status, and
+   the universe is built from `company_tickers.json`, which lists current registrants
+   only. A filer that went bankrupt in 2023 is not in the store to be excluded from a
+   2022 screen. Until a source of dead CIKs is ingested, every historical screen is
+   survivorship-biased, and `--compare 12,24` is the first feature that actually depends
+   on this being right.
+3. **Bulk ZIPs are still unused.** The plan and `CLAUDE.md` both say to prefer the
+   nightly `companyfacts.zip` and `submissions.zip` over per-company API calls; ingest
+   makes per-company calls, which is why a 5,000-filer ingest is an hour and a half of
+   wall clock at the SEC's rate limit rather than one download. Fine at 500 filers, the
+   binding constraint at 5,000.
+4. **The extractor was hand-checked on 11 filings, all from one filer.** The plan asks
+   for 50 hand-checked filings, and the point of the number is issuer variety: Apple's
+   house style is consistent across a decade, so the boundary logic has been tested
+   against one way of writing a 10-K. Every extraction bug found so far came from real
+   filings, and there are 500 filers in the store to sample.
+5. **The financial track does not exist.** Banks, insurers and REITs are excluded by SIC
+   (86 of 501 filers last run), and the plan asks for them to be routed to a separate
+   track with their own screens rather than merely dropped. Deferred deliberately; noted
+   so the exclusion is not mistaken for a decision that they do not matter.
+6. **The analysis layer does read the store directly.** The plan's output contract says
+   the analysis layer receives the candidate JSON "and nothing else". In practice
+   `analyze --prepare` reads `document_section` and the `candidate` row from the store,
+   which is what the component table in `CLAUDE.md` describes. The property the plan
+   wanted is preserved where it matters — the *prepared input file* is self-contained, so
+   a pass is reproducible from it alone — but the stage is not database-free, and saying
+   so is cheaper than someone later assuming it.
+
+Two things the audit found that are now fixed:
+
+- **The screen trend never reached the pass.** `--compare` computes `trend` and
+  `history`, `store_candidates` writes both into the candidate payload, and
+  `_screen_reason` dropped them on the way to Pass A — so the distinction the plan calls
+  for by name ("a company that has been cheap for two years is a different animal") was
+  computed, stored, documented in the skill, and then discarded one function before the
+  model saw it. Both now travel to the prompt, together: `trend` alone would be a label
+  the model cannot check, and Flexsteel's "new" means it was ineligible earlier rather
+  than newly cheap. Prompt `pass_a_v3` explains what each trend implies for what to read
+  for, and what it does not license — a trend cannot be quoted, so it can never be a
+  finding.
+- **The README described milestone 1 of 10 and "your own API keys".** Both were false:
+  the API-key line contradicted the design decision that there is no key. Rewritten
+  against what the code actually does.
+
 ## Next concrete step
 
 **The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`
@@ -217,9 +275,18 @@ Next, in rough order of value:
    assumption that rows are only ever added. A migration *edits* them, so the repair did
    not invalidate the cached run and the old answer kept being served. `SCREENER_VERSION`
    is the lever for that, and it is now 3.
-3. **A wider universe.** 500 filers by lowest CIK is not the market. `--limit 5000`
-   would take roughly an hour and a half of ingest at the SEC's rate limit.
-4. **Milestone 8, the valuation engine**, which is the next milestone proper.
+3. **Pass A over Item 7.** Audit item 1: the plan's Pass A is a risk-factor *and MD&A*
+   diff, the extractor already stores Item 7, and nothing pairs it. Cheapest real gain
+   on the list — one prompt written for MD&A, and a run on a filer already analysed so
+   the two passes can be compared.
+4. **A wider universe.** 500 filers by lowest CIK is not the market. `--limit 5000`
+   would take roughly an hour and a half of ingest at the SEC's rate limit — or one
+   download, if the bulk ZIPs of audit item 3 land first.
+5. **Milestone 8, the valuation engine**, which is the next milestone proper.
+
+The audit's other items — dead CIKs, bulk ingest, a wider extractor sample, the
+financial track — are above in "The plan, checked against what exists", with why each
+one is not urgent yet and what makes it urgent.
 
 ## Outstanding, and only you can do it
 
