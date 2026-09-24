@@ -544,9 +544,46 @@ is a standing fact rather than a change, and the most valuable finding here had 
 go: the metrics were identical to last year's. `metric_mix` now exists beside
 `metric_change`, and the prompt says to report the mix whether or not it moved.
 
-**Pass C is not built and is not blocked on code.** Earnings-call transcripts are not on
-EDGAR in any form, so there is nothing for `ingest` to fetch: it needs a transcript
-source, which is a decision about outside data rather than a milestone to build.
+**Pass C is deferred to a later phase, by decision (2026-09-23).** It is not blocked on
+code: earnings-call transcripts are not on EDGAR in any form, so there is nothing for
+`ingest` to fetch. It needs a transcript source, which is a decision about outside data —
+and about a dependency this project has so far avoided entirely, since everything else
+comes from EDGAR and Yahoo without an account. Milestone 7 is therefore complete apart
+from it: Passes A, B and D are built and have each run live.
+
+### Requested for a later phase: sentiment analysis by company and industry
+
+Asked for on 2026-09-23. Recorded here rather than queued, because it needs a scope
+decision first and the build plan rejected one version of it by name.
+
+**What the plan says.** Pass C's own description is "Earnings call Q&A. **Not sentiment
+scoring.** The question is which analyst question got a non-answer, and whether that
+topic recurred the following quarter." The reason is the first non-negotiable: every
+factual claim carries a filing URL and an accession number. A sentiment score is a number
+with no quote behind it — the one output shape everything else here refuses to produce —
+and a score that cannot be traced is indistinguishable from a score that was invented.
+
+**What would fit without touching the invariants.** The passes already do the honest
+version of this one company at a time: Pass A found three unrelated filers scrubbing ESG
+language in the same year, each with a quote. Widening that across a peer set is a real
+feature and stays inside the rules:
+
+- **Industry language comparison.** Take the filers sharing a SIC prefix, diff each one's
+  Item 1A year over year, and report which changes recur across the group — "eight of
+  eleven building-products filers added tariff language this year" with the eight quotes
+  attached. Every claim is still a quote from a named filing.
+- **Per-company topic tracking.** Whether a named topic — tariffs, a customer, a
+  covenant — appears, grows or disappears across a filer's own history, quoted each time.
+
+**What would not fit.** A sentiment number per company or per industry, a score over
+time, or anything derived from price or news flow. The last of those is out of scope
+permanently for the reasons in `CLAUDE.md`; the first two are not banned outright but
+they would be the project's first uncited output, and that is a decision to make
+deliberately rather than by adding a feature.
+
+Recommendation: build the industry language comparison, call it that rather than
+sentiment, and decide about scoring separately once there is something concrete to
+compare it against.
 
 ## Next concrete step
 
@@ -680,7 +717,7 @@ public, driven from Claude Code on an existing subscription rather than an API k
 | 8 | Valuation engine with bear/base/bull | **done**, run live on La-Z-Boy (CIK 57131) |
 | 9 | Thesis generator + bear pass + journal | **done**, run live on La-Z-Boy (CIK 57131) |
 | 10 | Quarterly falsification re-check job | **done**, run live; scheduling is a user setup step |
-| 7 | Passes B, C, D | not started |
+| 7 | Passes B, C, D | **B and D done**, run live; C deferred — needs a transcript source |
 | 5 | FastAPI app: screen index + dossier + filing diff | **deferred** |
 | 6 | Packaging, guided first run, sample database | **deferred** — no strangers to survive |
 
