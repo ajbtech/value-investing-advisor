@@ -139,6 +139,48 @@ class TestParseSubmissions:
         assert filer.exchange is None
 
 
+class TestCompanyFactsWithoutACik:
+    """Found in a live batch of 2,000: three closed-end funds returned `companyfacts`
+    carrying only `entityName` and `facts`, with no `cik` at all, and the parser raised
+    KeyError on every one. They report under the `cef` taxonomy rather than `us-gaap`, so
+    they hold nothing the screens read — but a filer whose document has an unusual shape
+    is not a filer that should fail, any more than the ten 404s were."""
+
+    def test_the_cik_that_was_asked_for_is_used(self):
+        doc = {
+            "entityName": "JOHN HANCOCK INVESTORS TRUST",
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "start": "2024-01-01",
+                                    "end": "2024-12-31",
+                                    "val": 10.0,
+                                    "filed": "2025-02-14",
+                                    "accn": "0000759828-25-000001",
+                                    "form": "10-K",
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        assert [f.cik for f in parse_company_facts(doc, cik=759828)] == [759828]
+
+    def test_a_document_naming_another_filer_is_refused(self):
+        """Trusting it silently would attribute one company's figures to another, which
+        is worse than failing."""
+        with pytest.raises(ValueError, match="different filer"):
+            parse_company_facts({"cik": 320193, "facts": {}}, cik=759828)
+
+    def test_a_document_with_no_cik_anywhere_is_refused(self):
+        with pytest.raises(ValueError, match="cik"):
+            parse_company_facts({"entityName": "Nameless", "facts": {}})
+
+
 class TestParseCompanyFacts:
     def test_stamps_each_fact_with_when_it_was_filed(self, company_facts):
         """Not the period end. This is the entire ballgame."""
