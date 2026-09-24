@@ -43,9 +43,30 @@ FOOTNOTE_FLAGS = frozenset(
     }
 )
 
-#: Either vocabulary is accepted on the way in; which one belongs to which pass is the
+#: Pass D reads the proxy, where the finding is what behaviour the pay is conditioned on.
+#: A metric dropped from the bonus is not a change of wording and not an accounting
+#: estimate; it is a forecast the company has written down about what it will do next.
+INCENTIVE_FLAGS = frozenset(
+    {
+        # The plan's question is "what is management actually paid on", which is a
+        # standing fact and not only a change. The first live run found La-Z-Boy's
+        # metrics identical to last year's and the interesting finding was the mix
+        # itself — paid on sales rather than on same-store sales — which had no flag to
+        # go under.
+        "metric_mix",
+        "metric_change",
+        "target_change",
+        "adjustment",
+        "discretion",
+        "vesting_change",
+        "related_person",
+        "ownership",
+    }
+)
+
+#: Any vocabulary is accepted on the way in; which one belongs to which pass is the
 #: prompt's business, and the pass is recorded on the row.
-ALL_FLAGS = CHANGE_TYPES | FOOTNOTE_FLAGS
+ALL_FLAGS = CHANGE_TYPES | FOOTNOTE_FLAGS | INCENTIVE_FLAGS
 SEVERITIES = frozenset({"low", "medium", "high"})
 
 _ELLIPSIS = re.compile(r"\s*(?:\.\.\.|…)\s*")

@@ -509,9 +509,44 @@ to match by heading, and a test holds it. The four findings above stay pinned to
 whose words are still in the repository exactly as they were — which is the point of
 pinning a prompt rather than editing one.
 
-Passes C (earnings calls) and D (proxy incentives) are not built. Both need documents the
-store does not hold yet: call transcripts are not on EDGAR at all, and DEF 14A is a form
-`ingest` does not fetch.
+## Pass D — proxy incentives, built and run live
+
+**The proxies were already in the store.** `ingest` keeps every form the submissions feed
+lists, so there are 6,974 DEF 14A filings with document URLs and no ingest work was
+needed at all — the guess in the previous section was wrong, and checking took one query.
+
+What was needed is an extractor: a proxy has no Item numbers, so the 10-K patterns find
+nothing in it. `extract_proxy` finds five named sections — `CDA`, `SUMMARY_COMP`,
+`PAY_VS_PERFORMANCE`, `RELATED_PERSON`, `DIRECTOR_COMP` — and `dossier extract --form
+"DEF 14A"` routes to it. On La-Z-Boy's last two proxies: four sections each at 0.9
+confidence, the CD&A running to 95,771 and 102,349 characters. `SUMMARY_COMP` was not
+found in either, which is the extractor reporting honestly rather than inventing a
+section.
+
+**Live on La-Z-Boy: 4 findings, 0 dropped, 0% fabrication** — and one of them bears
+directly on the thesis:
+
+- **Management is paid on absolute sales, not same-store sales.** "The Compensation
+  Committee selected sales and operating margin as the financial performance metrics to
+  focus management on" (0000057131-26-000024, and identically in the prior proxy).
+  Acquiring stores raises sales whether or not the existing stores are declining — which
+  is exactly what the fiscal 2026 filing shows: written sales up 8%, same-store down 3%.
+  The bear case and the incentive point the same way.
+- The four metrics are unchanged — sales, operating margin, operating cash flow, relative
+  shareholder return — and **none of them measures return on the capital** spent
+  acquiring those stores.
+- The three-year award paid "114% of target" this cycle against "133% of target" last.
+- Threshold payout "reflects meeting the threshold goal with respect to only one of the
+  performance goals", so sales rising on acquisitions pays out even if margin misses.
+
+**The live run added a flag.** The plan's question is what management is paid *on*, which
+is a standing fact rather than a change, and the most valuable finding here had nowhere to
+go: the metrics were identical to last year's. `metric_mix` now exists beside
+`metric_change`, and the prompt says to report the mix whether or not it moved.
+
+**Pass C is not built and is not blocked on code.** Earnings-call transcripts are not on
+EDGAR in any form, so there is nothing for `ingest` to fetch: it needs a transcript
+source, which is a decision about outside data rather than a milestone to build.
 
 ## Next concrete step
 
