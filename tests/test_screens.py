@@ -158,8 +158,15 @@ class TestAShareCountHasToBePlausible:
         eligible_filer(b, 1, name="Dillard's", WeightedAverageNumberOfSharesOutstandingBasic=15_655)
         # The quarterly figures the annual one contradicts.
         accession = b.annual(1, "2024-11-02", "2024-12-05", NetIncomeLoss=1.0)
-        b.fact(1, accession, "WeightedAverageNumberOfSharesOutstandingBasic", 15_618_000,
-               "2024-11-02", "2024-12-05", start="2024-08-03")
+        b.fact(
+            1,
+            accession,
+            "WeightedAverageNumberOfSharesOutstandingBasic",
+            15_618_000,
+            "2024-11-02",
+            "2024-12-05",
+            start="2024-08-03",
+        )
         # Dillard's cover page is fine; it is the annual weighted average that is wrong,
         # so the count has to be reached through that one to test anything.
         store.execute("DELETE FROM fact WHERE tag = 'EntityCommonStockSharesOutstanding'")
@@ -186,8 +193,15 @@ class TestAShareCountHasToBePlausible:
         b = StoreBuilder(store)
         eligible_filer(b, 1, name="Consolidated Co")
         accession = b.annual(1, "2023-12-31", "2024-02-14", NetIncomeLoss=1.0)
-        b.fact(1, accession, "WeightedAverageNumberOfSharesOutstandingBasic", 1_000_000_000,
-               "2023-12-31", "2024-02-14", start="2023-01-01")
+        b.fact(
+            1,
+            accession,
+            "WeightedAverageNumberOfSharesOutstandingBasic",
+            1_000_000_000,
+            "2023-12-31",
+            "2024-02-14",
+            start="2023-01-01",
+        )
         b.done()
         prepare(store, AS_OF)
         assert by_cik(universe_rows(store))[1]["shares"] == 100_000_000
