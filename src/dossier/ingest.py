@@ -211,7 +211,7 @@ def parse_submissions(doc: dict) -> tuple[FilerRecord, list[FilingRecord]]:
 
 
 def parse_company_facts(
-    doc: dict, tags: set[str] | frozenset[str] = SCREEN_TAGS
+    doc: dict, tags: set[str] | frozenset[str] = SCREEN_TAGS, cik: int | None = None
 ) -> list[FactRecord]:
     """Read a `companyfacts` document into facts, each stamped with its filing date.
 
@@ -219,7 +219,23 @@ def parse_company_facts(
     is stored as '' rather than NULL, so the primary key that prevents duplicate facts
     actually constrains — in SQLite a NULL in a primary key does not.
     """
-    cik = int(doc["cik"])
+    # Not every `companyfacts` document carries a `cik`. Three closed-end funds in a
+    # live batch returned only `entityName` and `facts`, reporting under the `cef`
+    # taxonomy, and failed here. The CIK the caller asked for is the authority; the
+    # document's own is a cross-check, and a mismatch is refused rather than trusted,
+    # because attributing one company's figures to another is worse than failing.
+    stated = doc.get("cik")
+    if stated is not None and cik is not None and int(stated) != int(cik):
+        raise ValueError(
+            f"companyfacts for CIK {cik} describes a different filer ({int(stated)}). "
+            "Refusing to attribute one company's figures to another."
+        )
+    if stated is None and cik is None:
+        raise ValueError(
+            "companyfacts carries no cik and none was supplied, so these facts cannot "
+            "be attributed to a filer."
+        )
+    cik = int(cik if cik is not None else stated)
     facts: list[FactRecord] = []
     for taxonomy in doc.get("facts", {}).values():
         for tag, body in taxonomy.items():
@@ -319,7 +335,9 @@ def ingest_filer(
     arrives under a different accession — is added alongside the original.
     """
     filer, filings = parse_submissions(submissions)
-    facts = parse_company_facts(company_facts, tags) if company_facts else []
+    # The submissions document establishes who this is, so pass that on rather than
+    # relying on companyfacts to repeat it — some documents do not.
+    facts = parse_company_facts(company_facts, tags, cik=filer.cik) if company_facts else []
     result = IngestResult(cik=filer.cik, filings=len(filings), facts=len(facts))
 
     known = {filing.accession_no for filing in filings}
