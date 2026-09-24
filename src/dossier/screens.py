@@ -24,6 +24,7 @@ from collections import Counter
 from datetime import UTC, date, datetime
 
 from dossier.asof import AsOfView
+from dossier.securities import is_common_stock
 
 #: The build plan's universe filters.
 MARKET_CAP_FLOOR = 300_000_000
@@ -270,6 +271,8 @@ SELECT cik, name, ticker, sic, track, last_10k, fiscal_years, latest_fy_end,
     WHEN track = 'financial' THEN 'financial filer: bank, insurer or REIT screens are separate'
     WHEN fiscal_years < {MIN_FISCAL_YEARS}
       THEN 'fewer than {MIN_FISCAL_YEARS} years of XBRL history'
+    WHEN NOT is_common_stock(ticker)
+      THEN 'listed ticker is not common stock: ' || COALESCE(ticker, 'none')
     WHEN price IS NULL THEN 'no price within {MAX_PRICE_AGE_DAYS} days of the as-of date'
     WHEN shares IS NULL THEN 'no share count on file'
     WHEN price * shares < {MARKET_CAP_FLOOR} THEN 'market cap below $300M'
@@ -533,6 +536,10 @@ def prepare(conn: sqlite3.Connection, as_of: date | str) -> AsOfView:
     """Materialise the as-of state and (re)build the screen views over it."""
     view = AsOfView(conn, as_of)
     view.materialise()
+    # A preferred issue's price is not the company's share price, and a market cap built
+    # from one is wrong by a multiple nobody can see. Registered here so the universe SQL
+    # can ask, rather than approximating the rule in SQL and having two of them.
+    conn.create_function("is_common_stock", 1, is_common_stock, deterministic=True)
     with conn:
         for name in _VIEWS:
             conn.execute(f"DROP VIEW IF EXISTS temp.{name}")
@@ -587,7 +594,9 @@ def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 #: 4: capital expenditure reads four alternate elements as well as the standard one, and
 #: every screen reports what it could not rank. Both change what a run says, so a cached
 #: answer from before them is the wrong answer.
-SCREENER_VERSION = "4"
+#: 5: a filer whose listed ticker is a preferred issue, warrant or unit leaves the
+#: universe rather than being priced off a security that is not its shares.
+SCREENER_VERSION = "5"
 
 #: The plan asks for roughly thirty: enough to be worth analysing, few enough to afford.
 CANDIDATE_LIMIT = 30
