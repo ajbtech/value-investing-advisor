@@ -143,6 +143,31 @@ class TestTheScreensSayWhatTheyCouldNotRank:
         assert run["screens"]["net_net"]["ranked"] == 1
 
 
+class TestTheUniverseWantsCommonStock:
+    """EDGAR lists every security a filer registered and ingest keeps the first, so a
+    stored ticker can be a preferred issue. Pricing a company off one produces a market
+    cap wrong by an unknowable multiple, and every ratio built on it inherits that."""
+
+    def test_a_preferred_ticker_leaves_the_universe_with_a_reason(self, store):
+        b = StoreBuilder(store)
+        eligible_filer(b, 1, name="Southern California Edison")
+        store.execute("UPDATE filer SET ticker = 'SCE-PG' WHERE cik = 1")
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(universe_rows(store))[1]
+        assert row["excluded_because"] == "listed ticker is not common stock: SCE-PG"
+
+    def test_a_share_class_is_not_excluded(self, store):
+        """Brown-Forman's B shares are common stock. Treating every hyphen as suspicious
+        would throw away real companies to avoid a different mistake."""
+        b = StoreBuilder(store)
+        eligible_filer(b, 1, name="Brown Forman Corp")
+        store.execute("UPDATE filer SET ticker = 'BF-B' WHERE cik = 1")
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(universe_rows(store))[1]["excluded_because"] is None
+
+
 class TestMaterialise:
     def test_a_fact_filed_after_the_as_of_date_is_not_there(self, store):
         b = StoreBuilder(store)
