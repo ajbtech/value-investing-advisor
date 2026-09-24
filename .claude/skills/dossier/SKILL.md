@@ -69,6 +69,7 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier thesis --cik N --load F` | Validate the thesis, append it, write the journal entry. |
 | `dossier thesis --cik N --bear --prepare` / `--load F` | The bear pass: attack the stored thesis, quoting filings. |
 | `dossier thesis --cik N --pass-over "REASON"` | Record a candidate that cleared screening and was passed over. |
+| `dossier deregistrations --from-year YYYY --json` | Read EDGAR's form index and record which filers stopped filing. |
 | `dossier recheck --json` | Re-check every open thesis against its own falsification conditions. |
 | `dossier status --json` | What the store holds and what work is pending. |
 | `dossier resume --json` | Retry everything pending or failed. |

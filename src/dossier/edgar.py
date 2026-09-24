@@ -229,6 +229,22 @@ class EdgarClient:
         return self.get_json(f"{DATA}/submissions/{self.cik_str(cik)}.json")
 
     def ticker_map(self) -> dict[int, str]:
-        """CIK to ticker, from the weekly `company_tickers.json`."""
+        """CIK to ticker, from the weekly `company_tickers.json`.
+
+        Current registrants only. A filer that stopped trading is not in here, which is
+        exactly why the universe needs `dossier.deregistrations` as well: this map cannot
+        tell you about the companies that failed.
+        """
         body = self.get_json(f"{WWW}/files/company_tickers.json")
         return {int(row["cik_str"]): row["ticker"] for row in body.values()}
+
+    def form_index(self, year: int, quarter: int) -> str:
+        """One quarter's index of every filing by form type, as text.
+
+        A single file per quarter covering every filer, which is the cheap way to find
+        the ones that died: a per-company crawl would need to know their CIKs first, and
+        not knowing them is the problem.
+        """
+        from dossier.deregistrations import form_index_url
+
+        return self.get(form_index_url(year, quarter)).text
