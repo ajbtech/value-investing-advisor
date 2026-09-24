@@ -53,6 +53,7 @@ from dossier.thesis import (
     prepare_thesis,
     record_pass_over,
 )
+from dossier.universe import AnnualFiler, parse_annual_filers, unheld
 from dossier.valuation import load_valuation, prepare_valuation
 
 #: How far back `dossier prices` fetches by default: enough for the screens to run as of
@@ -282,6 +283,27 @@ def build_parser() -> argparse.ArgumentParser:
         "survivorship gap itself, since the ticker map can never find them",
     )
 
+    universe = subcommands.add_parser(
+        "universe",
+        parents=[common],
+        help="find every filer that produced an annual report, from EDGAR's form index — "
+        "including the ones that no longer trade",
+    )
+    universe.add_argument("--from-year", dest="from_year", type=int, required=True, metavar="YYYY")
+    universe.add_argument(
+        "--to-year",
+        dest="to_year",
+        type=int,
+        metavar="YYYY",
+        help="inclusive; defaults to --from-year",
+    )
+    universe.add_argument(
+        "--ingest",
+        action="store_true",
+        help="also ingest the filers the store does not hold: two requests each",
+    )
+    universe.add_argument("--limit", type=int, help="with --ingest, fetch at most this many filers")
+
     subcommands.add_parser(
         "status", parents=[common], help="what is in the store and what work is pending"
     )
@@ -325,6 +347,8 @@ def main(
             return _recheck(args, config)
         if args.command == "deregistrations":
             return _deregistrations(args, config, client)
+        if args.command == "universe":
+            return _universe(args, config, client)
         if args.command == "status":
             return _status(args, config)
         if args.command == "resume":
@@ -769,6 +793,70 @@ def _deregistrations(args, config: Config, client: EdgarClient | None) -> int:
         else:
             print(" — pass --ingest to fetch them")
     return 0
+
+
+def _universe(args, config: Config, client: EdgarClient | None) -> int:
+    """Find every filer that produced an annual report, and optionally fetch them.
+
+    The ticker map lists who trades today; the form index lists who filed, dead or
+    alive. Reading it is four requests a year. Fetching what it finds is two requests
+    per filer, so that part waits for `--ingest`.
+    """
+    to_year = args.to_year or args.from_year
+    if to_year < args.from_year:
+        print("dossier universe: --to-year is before --from-year", file=sys.stderr)
+        return 2
+
+    edgar = _client(client)
+    found: list[AnnualFiler] = []
+    quarters = []
+    for year in range(args.from_year, to_year + 1):
+        for quarter in (1, 2, 3, 4):
+            try:
+                text = edgar.form_index(year, quarter)
+            except Exception as exc:
+                # A quarter that has not happened yet, or a gap in the archive. Neither
+                # is a reason to lose the quarters that did parse.
+                quarters.append({"year": year, "quarter": quarter, "error": str(exc)[:120]})
+                continue
+            parsed = parse_annual_filers(text)
+            found.extend(parsed)
+            quarters.append({"year": year, "quarter": quarter, "annual_filers": len(parsed)})
+
+    with open_store(config.store_path) as conn:
+        missing = unheld(conn, found)
+        distinct = len({filer.cik for filer in found})
+        ingested = []
+        if args.ingest:
+            to_fetch = missing if args.limit is None else missing[: args.limit]
+            _say(args.as_json, f"Ingesting {len(to_fetch)} filer(s) the store did not hold")
+            queue = JobQueue(conn, output_dir=config.output_dir)
+            for filer in to_fetch:
+                result = _ingest_one(queue, conn, edgar, filer.cik, force=False)
+                ingested.append(result)
+                _say(args.as_json, _describe(result))
+
+    failures = sum(1 for r in ingested if r["status"] in ("failed", "skipped"))
+    result = {
+        "command": "universe",
+        "years": [args.from_year, to_year],
+        "quarters": quarters,
+        "annual_filers": distinct,
+        "held": distinct - len(missing),
+        "not_held": len(missing),
+        "ingested": ingested,
+        "failures": failures,
+    }
+    if args.as_json:
+        _emit(result)
+    else:
+        print(f"Read {len(quarters)} quarter(s): {distinct} filer(s) with an annual report")
+        print(f"The store holds {result['held']}; {len(missing)} it has never heard of", end="")
+        if args.ingest:
+            print(f", ingested {len(ingested)}")
+        else:
+            print(" — pass --ingest to fetch them")
+    return 1 if failures else 0
 
 
 def _recheck(args, config: Config) -> int:

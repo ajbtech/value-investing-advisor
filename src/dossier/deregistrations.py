@@ -25,9 +25,10 @@ wins and is never softened by a later filing.
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from dataclasses import dataclass
+
+from dossier.formindex import index_rows
 
 #: The forms worth reading, mapped to the status each one can support on its own.
 #:
@@ -49,11 +50,6 @@ TERMINAL_FORMS: dict[str, str | None] = {
     "25-NSE": None,
 }
 
-#: `form.idx` is column-aligned, not delimited: form type, company name, CIK, date, path.
-#: Splitting on runs of two or more spaces survives company names containing single
-#: spaces, which splitting on whitespace does not.
-_ROW = re.compile(r"^(\S+)\s{2,}(.+?)\s{2,}(\d{1,10})\s{2,}(\d{4}-\d{2}-\d{2})\s{2,}(\S+)\s*$")
-
 
 @dataclass(frozen=True)
 class Deregistration:
@@ -68,36 +64,22 @@ class Deregistration:
         return TERMINAL_FORMS[self.form]
 
 
-def form_index_url(year: int, quarter: int) -> str:
-    """The quarterly index of every filing by form type."""
-    if quarter not in (1, 2, 3, 4):
-        raise ValueError(f"quarter must be 1-4, got {quarter}")
-    return f"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/form.idx"
-
-
 def parse_form_index(text: str) -> list[Deregistration]:
     """Every terminal filing in one quarterly index.
 
     Unrecognised forms are skipped rather than guessed at: a form this code has not been
     taught about is not evidence that a company died.
     """
-    found = []
-    for line in text.splitlines():
-        match = _ROW.match(line)
-        if match is None:
-            continue
-        form, name, cik, filed, _path = match.groups()
-        if form.upper() not in TERMINAL_FORMS:
-            continue
-        found.append(
-            Deregistration(
-                cik=int(cik),
-                form=form.upper(),
-                filed_date=filed,
-                company_name=name.strip() or None,
-            )
+    return [
+        Deregistration(
+            cik=row.cik,
+            form=row.form,
+            filed_date=row.filed_date,
+            company_name=row.company_name,
         )
-    return found
+        for row in index_rows(text)
+        if row.form in TERMINAL_FORMS
+    ]
 
 
 def mark_terminal_status(conn: sqlite3.Connection, records: list[Deregistration]) -> int:
