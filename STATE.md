@@ -77,10 +77,15 @@ by reason (86 financials, 69 under the $300M floor, 43 without a recent 10-K).
 - **Greenblatt's return on capital explodes for asset-light filers.** Korn Ferry shows
   1869% because its tangible capital is tiny after negative working capital. That is the
   definition working as written, but it distorts the combined rank.
-- **A filer's ticker may not be its common stock.** EDGAR lists every security, and
-  ingest keeps the first, so a preferred issue (`SCE-PG`) or an exchange-listed bond
-  (`EAI`) can stand in for the common. None reached the eligible universe this run,
-  because other filters caught them first. Nothing detects it yet.
+- ~~**A filer's ticker may not be its common stock.**~~ **Fixed.** EDGAR lists every
+  security and ingest keeps the first, so a preferred issue (`SCE-PG`) could stand in for
+  the common stock and a market cap built from its price is wrong by a multiple nobody
+  can see. At 500 filers other filters caught those tickers first; at 8,000 they reach the
+  eligible universe, so `dossier.securities` now classifies the suffix and such a filer
+  leaves the universe with the reason named. The distinction is between a share class and
+  a different security, and both use a hyphen: `BF-B`, `MOG-A`, `CRD-A`, `TAP-A` and
+  `AKO-A` are common stock; `SCE-PG`, `CMS-PB`, `CTA-PB`, `CDR-PB` and `SNUS-PH` are
+  preferred. An unrecognised suffix is `unknown` rather than assumed common.
 - **Multi-class filers are priced off one class.** The share count covers every class,
   but the price is whichever ticker EDGAR listed first, and HEICO's two classes trade
   about 20% apart.
