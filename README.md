@@ -63,9 +63,12 @@ What works today:
   flags policy changes, changes of estimate, related-party dealings, off-balance-sheet
   obligations, pension assumptions and segment reclassifications — each with a quote.
 
-Not built yet: Passes C and D (earnings calls, proxy incentives), which need documents
-the store does not hold, and scheduling the re-check, which has to be bound to the
-machine holding the data. `STATE.md` has the current state in
+- **Pass D, proxy incentives.** What management is actually paid on, from the DEF 14A —
+  because compensation metrics predict behaviour better than strategy slides do.
+
+Not built yet: Pass C (earnings calls), which needs a transcript source since EDGAR
+carries none, and scheduling the re-check, which has to be bound to the machine holding
+the data. `STATE.md` has the current state in
 detail, including the limitations that are known and open.
 
 ## Install

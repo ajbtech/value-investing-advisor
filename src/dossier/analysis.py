@@ -45,7 +45,15 @@ PASS_A_PROMPTS = {"1A": PASS_A_VERSION, "7": "pass_a_mdna_v1"}
 #: to v1, whose words are still in the repository exactly as they were.
 PASS_B_PROMPTS = {"8": "pass_b_v2"}
 
-PASS_PROMPTS = {"a": PASS_A_PROMPTS, "b": PASS_B_PROMPTS}
+#: Pass D reads the proxy's compensation sections. Every one takes the same prompt: the
+#: question — what is management paid on — is the same wherever in the document the
+#: answer happens to sit.
+PASS_D_PROMPTS = dict.fromkeys(
+    ("CDA", "SUMMARY_COMP", "PAY_VS_PERFORMANCE", "DIRECTOR_COMP", "RELATED_PERSON"),
+    "pass_d_v1",
+)
+
+PASS_PROMPTS = {"a": PASS_A_PROMPTS, "b": PASS_B_PROMPTS, "d": PASS_D_PROMPTS}
 
 #: Below this, the extraction is too doubtful to reason over. Analysing a bad parse
 #: produces confident findings about text the filing does not contain — the pass should
@@ -265,6 +273,63 @@ def prepare_pass_b(conn, cik: int, item: str = "8") -> dict:
             [{k: v for k, v in note.items() if k != "text"} for note in split_notes(prior["text"])]
             if prior
             else []
+        ),
+        "screen": _screen_reason(conn, cik),
+    }
+
+
+def prepare_pass_d(conn, cik: int, item: str = "CDA") -> dict:
+    """Pass D's input: this year's proxy compensation sections, and last year's.
+
+    The whole pass is a comparison — a weighting means nothing until you can see what it
+    was — so the prior proxy travels whenever the store has one. Every compensation
+    section of the current proxy is handed over, because the answer to "what is
+    management paid on" sits in a different place in every filer's document.
+    """
+    prompt_version = prompt_version_for(item, pass_name="d")
+    proxies = conn.execute(
+        "SELECT DISTINCT f.accession_no, f.filed_date FROM document_section d "
+        "JOIN filing f ON f.accession_no = d.accession_no "
+        "WHERE f.cik = ? AND f.form_type = 'DEF 14A' ORDER BY f.filed_date DESC",
+        (cik,),
+    ).fetchall()
+    if not proxies:
+        raise ValueError(
+            f"no extracted proxy for CIK {cik}. Run `dossier extract --cik {cik} "
+            "--form 'DEF 14A'` first: this pass reads the compensation sections, and "
+            "they are in the proxy rather than the 10-K."
+        )
+
+    def sections_of(accession: str) -> dict[str, dict]:
+        rows = conn.execute(
+            "SELECT accession_no, item, text, extraction_confidence, char_count "
+            "FROM document_section WHERE accession_no = ? AND item IN "
+            "('CDA', 'SUMMARY_COMP', 'PAY_VS_PERFORMANCE', 'DIRECTOR_COMP', 'RELATED_PERSON')",
+            (accession,),
+        ).fetchall()
+        return {row["item"]: dict(row) for row in rows}
+
+    current_accession = proxies[0]["accession_no"]
+    prior_accession = proxies[1]["accession_no"] if len(proxies) > 1 else None
+    return {
+        "cik": cik,
+        "item": item,
+        "pass": "d",
+        "prompt_version": prompt_version,
+        "instructions": prompt_text(prompt_version),
+        "proxy": {
+            "accession_no": current_accession,
+            "filed_date": proxies[0]["filed_date"],
+            "sections": sections_of(current_accession),
+        },
+        "prior_proxy": (
+            {
+                "accession_no": prior_accession,
+                "filed_date": proxies[1]["filed_date"],
+                "sections": sections_of(prior_accession),
+            }
+            if prior_accession
+            else None
         ),
         "screen": _screen_reason(conn, cik),
     }

@@ -22,6 +22,7 @@ from dossier.analysis import (
     load_findings,
     prepare_pass_a,
     prepare_pass_b,
+    prepare_pass_d,
     prompt_version_for,
 )
 from dossier.asof import AsOfView, fact_count
@@ -100,6 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="pull Item sections out of filings already in the store",
     )
     extract.add_argument("--cik", type=int, metavar="CIK", help="extract this filer's 10-Ks")
+    extract.add_argument(
+        "--form",
+        default="10-K",
+        choices=["10-K", "DEF 14A"],
+        help="which form to extract (the proxy carries the compensation sections)",
+    )
     extract.add_argument("--accession", metavar="ACCESSION", help="extract one named filing")
     extract.add_argument("--limit", type=int, help="stop after this many filings")
     extract.add_argument("--force", action="store_true", help="re-extract filings already done")
@@ -161,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
         help="prepare an analysis pass, or load its findings back",
     )
-    analyze.add_argument("--pass", dest="pass_name", default="a", choices=["a", "b"])
+    analyze.add_argument("--pass", dest="pass_name", default="a", choices=["a", "b", "d"])
     analyze.add_argument("--cik", type=int, required=True, metavar="CIK")
     analyze.add_argument(
         "--item",
@@ -433,7 +440,7 @@ def _extract_one(queue: JobQueue, conn, edgar: EdgarClient, filing, force: bool)
 
     try:
         html = edgar.get(filing["primary_doc_url"]).text
-        extracted = extract_filing(conn, accession, html)
+        extracted = extract_filing(conn, accession, html, form_type=filing["form_type"])
     except Exception as exc:
         queue.fail(claimed, f"{type(exc).__name__}: {exc}")
         result["status"] = "failed"
@@ -474,11 +481,11 @@ def _extract(args, config: Config, client: EdgarClient | None) -> int:
                 "SELECT * FROM filing WHERE accession_no = ?", (args.accession,)
             ).fetchall()
         else:
-            # Pass A diffs consecutive 10-Ks, so that is what is worth extracting.
+            # Pass A diffs consecutive 10-Ks and Pass B reads their footnotes; Pass D
+            # reads the proxy. Nothing else in the store is worth the fetch.
             filings = conn.execute(
-                "SELECT * FROM filing WHERE cik = ? AND form_type = '10-K' "
-                "ORDER BY filed_date DESC",
-                (args.cik,),
+                "SELECT * FROM filing WHERE cik = ? AND form_type = ? ORDER BY filed_date DESC",
+                (args.cik, args.form),
             ).fetchall()
         if args.limit is not None:
             filings = filings[: args.limit]
@@ -896,13 +903,15 @@ def _analyze(args, config: Config) -> int:
 
     # Each pass reads its own section, so the default follows the pass rather than
     # making every caller remember that footnote forensics means Item 8.
-    item = args.item or ("8" if args.pass_name == "b" else "1A")
+    item = args.item or {"b": "8", "d": "CDA"}.get(args.pass_name, "1A")
 
     with open_store(config.store_path) as conn:
         if args.prepare:
             try:
                 if args.pass_name == "b":
                     payload = prepare_pass_b(conn, cik=args.cik, item=item)
+                elif args.pass_name == "d":
+                    payload = prepare_pass_d(conn, cik=args.cik, item=item)
                 else:
                     payload = prepare_pass_a(conn, cik=args.cik, item=item).to_dict()
             except ValueError as exc:

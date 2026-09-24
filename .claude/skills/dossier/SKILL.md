@@ -60,6 +60,8 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier analyze --pass a --cik N --prepare` | Write Pass A's input: the prompt and both Item 1A sections. |
 | `dossier analyze --pass a --cik N --item 7 --prepare` | The same, for the MD&A. Item 1A and Item 7 have a prompt each. |
 | `dossier analyze --pass b --cik N --prepare` | Pass B: the footnotes (Item 8), split into notes with an index. |
+| `dossier extract --cik N --form "DEF 14A"` | Extract the proxy's compensation sections. |
+| `dossier analyze --pass d --cik N --prepare` | Pass D: what management is paid on, from the proxy. |
 | `dossier analyze --pass a --cik N --load F` | Read findings back, validate every quote, store what survives. |
 | `dossier value --cik N --prepare` | Write the valuation's input: the figures, the findings, the fixed rules. |
 | `dossier value --cik N --load F` | Read assumptions back, validate every justification, store the range. |
@@ -209,6 +211,26 @@ quote verbatim, cite the accession, and the validator drops what it cannot find.
 
 Fill in `commentary` with which notes you read and found nothing in. It tells the next
 reader where you have already been.
+
+## Running Pass D — what management is paid on
+
+The proxies are already in the store (`ingest` keeps every form), but they need
+extracting first: `dossier extract --cik N --form "DEF 14A"`. A proxy has no Item
+numbers, so its sections are found by name — `CDA`, `SUMMARY_COMP`,
+`PAY_VS_PERFORMANCE`, `RELATED_PERSON`, `DIRECTOR_COMP` — and a section the filer titled
+something else is absent rather than empty.
+
+Then `dossier analyze --pass d --cik N --prepare` hands over this year's compensation
+sections and last year's. **Report the metric mix even when nothing changed** — that is
+the question the pass exists to answer, and `metric_mix` is the flag for it. The others
+are `metric_change`, `target_change`, `adjustment`, `discretion`, `vesting_change`,
+`related_person`, `ownership`.
+
+The useful finding is usually the gap between what the company says it is doing and what
+it pays for. La-Z-Boy's plan pays on absolute sales while its same-store sales fall, and
+no metric measures return on the capital spent acquiring stores. Say that plainly, with
+the quote — and say nothing about whether the pay is too high, which is a different
+argument and not this tool's business.
 
 ## Running a valuation — you propose, the code decides
 

@@ -213,6 +213,76 @@ def extract_sections(
     return {item: section for item, section in sections.items() if section.text}
 
 
+#: A proxy statement has no Item numbers, so its sections are found by name. These are
+#: the ones Pass D reads: what management is paid on, what it was actually paid, how the
+#: filer reconciles that to shareholder return, and who it does business with.
+#:
+#: Each pattern matches a heading on its own line. The names vary by filer and by year —
+#: "Pay Versus Performance" only exists since the SEC's 2023 rule — so a section that is
+#: absent is absent, never empty: a zero-length section would read as a filer that
+#: disclosed nothing, which is a different claim.
+PROXY_SECTIONS: dict[str, str] = {
+    "CDA": r"COMPENSATION\s+DISCUSSION\s+(?:AND|&)\s+ANALYSIS",
+    "SUMMARY_COMP": r"SUMMARY\s+COMPENSATION\s+TABLE",
+    "PAY_VS_PERFORMANCE": r"PAY\s+(?:VERSUS|VS\.?)\s+PERFORMANCE",
+    "RELATED_PERSON": (
+        r"CERTAIN\s+RELATIONSHIPS\s+AND\s+RELATED\s+(?:PERSON|PARTY)\s+TRANSACTIONS"
+        r"|RELATED\s+PERSON\s+TRANSACTIONS"
+    ),
+    "DIRECTOR_COMP": r"DIRECTOR\s+COMPENSATION",
+}
+
+#: Any of the named headings, or any other all-capitals or title-case line that looks
+#: like a proxy heading, so a section ends where the next one starts rather than running
+#: on into the audit committee report.
+_PROXY_HEADING = re.compile(
+    r"^[ \t]*(?:"
+    + "|".join(f"(?P<{name}>{pattern})" for name, pattern in PROXY_SECTIONS.items())
+    + r"|(?P<OTHER>(?:PROPOSAL|NOTICE|AUDIT\s+COMMITTEE|REPORT\s+OF|EQUITY\s+COMPENSATION"
+    r"|SECURITY\s+OWNERSHIP|BENEFICIAL\s+OWNERSHIP|CORPORATE\s+GOVERNANCE"
+    r"|QUESTIONS\s+AND\s+ANSWERS|OTHER\s+MATTERS)[^\n]{0,80})"
+    r")[ \t]*:?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def extract_proxy(raw_html: str) -> list[Section]:
+    """Pull the compensation sections out of a DEF 14A.
+
+    The 10-K extractor finds nothing here, because a proxy has named headings rather
+    than numbered items. Confidence is scored the same way in spirit: a section that
+    ends where another known heading begins is more trustworthy than one that ran to the
+    end of the document because nothing followed it.
+    """
+    text = normalise(raw_html)
+    matches = list(_PROXY_HEADING.finditer(text))
+    if not matches:
+        return []
+
+    best: dict[str, Section] = {}
+    for index, match in enumerate(matches):
+        name = match.lastgroup
+        if name is None or name == "OTHER":
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        ended_at = matches[index + 1].lastgroup if index + 1 < len(matches) else None
+        body = text[match.end() : end].strip()
+        if not body:
+            continue
+        # Longest span wins, for the same reason as the 10-K extractor: the table of
+        # contents entry is followed immediately by the next contents line.
+        existing = best.get(name)
+        if existing is None or len(body) > existing.char_count:
+            best[name] = Section(
+                item=name,
+                text=body,
+                confidence=0.9 if ended_at else 0.6,
+                ended_at=ended_at,
+                heading=" ".join(match.group(0).split()),
+            )
+    return list(best.values())
+
+
 @dataclass
 class ExtractResult:
     accession_no: str
@@ -273,6 +343,16 @@ def extract_filing(
     accession_no: str,
     raw_html: str,
     items: tuple[str, ...] | list[str] = DEFAULT_ITEMS,
+    form_type: str | None = None,
 ) -> ExtractResult:
-    """Extract one filing's sections and write them to the store."""
-    return store_sections(conn, accession_no, extract_sections(raw_html, items))
+    """Extract one filing's sections and write them to the store.
+
+    A proxy statement takes the other extractor: it has named headings rather than
+    numbered items, so running the 10-K patterns over it would find nothing and report a
+    filing with no sections, which looks exactly like a parse that failed.
+    """
+    if form_type and form_type.upper().startswith("DEF 14A"):
+        sections = {section.item: section for section in extract_proxy(raw_html)}
+    else:
+        sections = extract_sections(raw_html, items)
+    return store_sections(conn, accession_no, sections)
