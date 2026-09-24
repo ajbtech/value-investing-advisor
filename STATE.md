@@ -617,6 +617,25 @@ the test date", and the same form index makes that possible properly — it list
 tickers plus a correction. That is the next piece of work, and it replaces the ticker map
 as the universe source rather than patching it.
 
+### The universe from the form index — built, not yet run live
+
+`dossier universe --from-year Y [--to-year Y] [--ingest] [--limit N]` reads the same
+quarterly index for every `10-K`, `10-KT`, `10-K405` and `10-KSB`, and reports the
+filers that produced an annual report in those years, how many the store holds, and how
+many it has never heard of. Without `--ingest` it fetches nobody, because the gap is
+likely thousands of filers at two requests each.
+
+**What it does not fix, and says so.** A dead filer has no ticker, and Yahoo has no
+price for a ticker that stopped trading, so it still cannot be screened for want of a
+market cap. Before this change it was excluded as "listed ticker is not common stock:
+none", which hid it under a reason about something else. Now a filer that was
+investable on the as-of date and stopped filing later is excluded as **"no price for a
+filer that later stopped filing: the survivorship gap"**, and that count is the size of
+the bias still in any historical run. Closing it needs a price source for delisted
+securities, which is a decision about outside data rather than code.
+
+`SCREENER_VERSION` is 6, so cached screen runs recompute with the new reasons.
+
 ## Next concrete step
 
 **The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`
