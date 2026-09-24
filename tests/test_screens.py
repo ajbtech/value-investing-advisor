@@ -143,6 +143,56 @@ class TestTheScreensSayWhatTheyCouldNotRank:
         assert run["screens"]["net_net"]["ranked"] == 1
 
 
+class TestAShareCountHasToBePlausible:
+    """Both cases are real, found at 2,000 filers by asking which companies had a big
+    revenue and a tiny share count. Most of the answers were correct — AutoZone really
+    has 16M shares, NVR 2.7M, Seaboard 958k — which is exactly why the rule has to key on
+    the filer's own other figures rather than on an absolute floor."""
+
+    def test_a_count_denominated_in_thousands_is_refused(self, store):
+        """Dillard's tagged its annual weighted average as 15,655 while every quarterly
+        figure that year was about 15,618,000. Market cap came out at $0.01B and a company
+        of roughly $5B was excluded for being under the $300M floor — silently, with every
+        figure in the row internally consistent."""
+        b = StoreBuilder(store)
+        eligible_filer(b, 1, name="Dillard's", WeightedAverageNumberOfSharesOutstandingBasic=15_655)
+        # The quarterly figures the annual one contradicts.
+        accession = b.annual(1, "2024-11-02", "2024-12-05", NetIncomeLoss=1.0)
+        b.fact(1, accession, "WeightedAverageNumberOfSharesOutstandingBasic", 15_618_000,
+               "2024-11-02", "2024-12-05", start="2024-08-03")
+        # Dillard's cover page is fine; it is the annual weighted average that is wrong,
+        # so the count has to be reached through that one to test anything.
+        store.execute("DELETE FROM fact WHERE tag = 'EntityCommonStockSharesOutstanding'")
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(universe_rows(store))[1]
+        assert row["shares"] is None
+        assert row["excluded_because"] == "no share count on file"
+
+    def test_a_zero_is_not_a_share_count(self, store):
+        """CHS reports EntityCommonStockSharesOutstanding as 0 every quarter. That is true
+        of its common stock and useless as a denominator."""
+        b = StoreBuilder(store)
+        eligible_filer(b, 1, name="CHS Inc")
+        store.execute("UPDATE fact SET value = 0 WHERE tag LIKE 'WeightedAverage%'")
+        store.execute("DELETE FROM fact WHERE tag = 'EntityCommonStockSharesOutstanding'")
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(universe_rows(store))[1]["shares"] is None
+
+    def test_a_reverse_split_is_not_an_error(self, store):
+        """A ten-for-one reverse split really does cut the count tenfold, and a company
+        that did one is still a company. The threshold is a hundred for that reason."""
+        b = StoreBuilder(store)
+        eligible_filer(b, 1, name="Consolidated Co")
+        accession = b.annual(1, "2023-12-31", "2024-02-14", NetIncomeLoss=1.0)
+        b.fact(1, accession, "WeightedAverageNumberOfSharesOutstandingBasic", 1_000_000_000,
+               "2023-12-31", "2024-02-14", start="2023-01-01")
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(universe_rows(store))[1]["shares"] == 100_000_000
+
+
 class TestTheUniverseWantsCommonStock:
     """EDGAR lists every security a filer registered and ingest keeps the first, so a
     stored ticker can be a preferred issue. Pricing a company off one produces a market

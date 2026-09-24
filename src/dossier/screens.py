@@ -171,6 +171,13 @@ SHARE_COUNT_MAX_AGE_MONTHS = 15
 #: is taken to be one class of several, not the whole company.
 WHOLE_COMPANY_RATIO = 0.8
 
+#: A chosen share count this many times smaller than the largest the filer has reported
+#: in four years is denominated differently from its own other figures — Dillard's tagged
+#: an annual weighted average of 15,655 against quarterly figures near 15,618,000. A
+#: reverse split is a factor of ten or so, never a hundred, so this separates a filer's
+#: units error from a real corporate action.
+SHARE_COUNT_IMPLAUSIBLE_RATIO = 100
+
 # The share count behind market cap, from two candidates:
 #
 # - the latest point-in-time count (the cover page's EntityCommonStockSharesOutstanding,
@@ -215,9 +222,22 @@ weighted AS (
                     'WeightedAverageNumberOfDilutedSharesOutstanding')
   ) WHERE recency = 1
 ),
+-- The largest share figure the filer has reported recently, whatever the tag. It is the
+-- yardstick for whether the chosen count is denominated the way the price is: Dillard's
+-- tagged its annual weighted average as 15,655 while every quarterly figure that year was
+-- about 15,618,000, a thousands error in its own XBRL. Market cap came out at $0.01B and
+-- a company of roughly $5B was excluded for being under the $300M floor — silently, and
+-- with every figure in the row internally consistent.
+recent_max AS (
+  SELECT f.cik, MAX(f.value) AS max_shares
+  FROM fact_asof f CROSS JOIN p
+  WHERE f.unit = 'shares' AND f.value > 0
+    AND f.period_end >= date(p.as_of, '-4 years')
+  GROUP BY f.cik
+),
 filers AS (SELECT cik FROM point_in_time UNION SELECT cik FROM weighted),
 chosen AS (
-  SELECT f.cik, i.value AS i_value, w.value AS w_value,
+  SELECT f.cik, i.value AS i_value, w.value AS w_value, m.max_shares,
     i.value IS NOT NULL AND (w.value IS NULL OR i.value >= {WHOLE_COMPANY_RATIO} * w.value)
       AS use_point_in_time,
     i.period_end AS i_date, i.tag AS i_tag, i.accession_no AS i_acc, i.filed_date AS i_filed,
@@ -225,14 +245,32 @@ chosen AS (
   FROM filers f
   LEFT JOIN point_in_time i ON i.cik = f.cik
   LEFT JOIN weighted w ON w.cik = f.cik
+  LEFT JOIN recent_max m ON m.cik = f.cik
+),
+picked AS (
+  SELECT chosen.*,
+    CASE WHEN use_point_in_time THEN i_value ELSE w_value END AS picked_value
+  FROM chosen
 )
 SELECT cik,
-  CASE WHEN use_point_in_time THEN i_value ELSE w_value END AS shares,
+  -- A zero is not a share count. CHS reports EntityCommonStockSharesOutstanding as 0
+  -- every quarter, which is true of its common stock and useless as a denominator.
+  -- Below a hundredth of the filer's own recent maximum, the figure is denominated
+  -- differently from the price; a reverse split is a factor of ten or so, never a
+  -- hundred, so this catches the units errors without catching real corporate actions.
+  CASE
+    WHEN picked_value IS NULL OR picked_value <= 0 THEN NULL
+    WHEN max_shares IS NOT NULL AND picked_value * {SHARE_COUNT_IMPLAUSIBLE_RATIO} < max_shares
+      THEN NULL
+    ELSE picked_value
+  END AS shares,
   CASE WHEN use_point_in_time THEN i_date ELSE w_date END AS shares_date,
   CASE WHEN use_point_in_time THEN i_tag ELSE w_tag END AS shares_tag,
   CASE WHEN use_point_in_time THEN i_acc ELSE w_acc END AS shares_accession,
-  CASE WHEN use_point_in_time THEN i_filed ELSE w_filed END AS shares_filed
-FROM chosen
+  CASE WHEN use_point_in_time THEN i_filed ELSE w_filed END AS shares_filed,
+  picked_value AS shares_reported,
+  max_shares AS shares_recent_max
+FROM picked
 """
 
 UNIVERSE_SQL = f"""

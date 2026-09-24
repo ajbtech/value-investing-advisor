@@ -88,7 +88,23 @@ by reason (86 financials, 69 under the $300M floor, 43 without a recent 10-K).
   preferred. An unrecognised suffix is `unknown` rather than assumed common.
 - **Multi-class filers are priced off one class.** The share count covers every class,
   but the price is whichever ticker EDGAR listed first, and HEICO's two classes trade
-  about 20% apart.
+  about 20% apart. Rarer than feared at scale: 6 of 1,958 tickers with a ticker are share
+  classes, and for Brown-Forman and Moog the two classes trade close enough that the
+  market cap is right to a few percent. Molson Coors is out by 10–15%. Berkshire is the
+  dangerous shape — the stored count of 1,643,456 is Class A equivalents while `BRK-B` is
+  the B ticker — and it escapes only because Berkshire is excluded as a financial.
+- **A share count now has to be plausible against the filer's own figures.** Two real
+  errors, found at 2,000 filers by asking which companies had a large revenue and a tiny
+  share count. Dillard's tagged its annual weighted average as **15,655** while every
+  quarterly figure that year was about **15,618,000** — a thousands error in its own XBRL.
+  Market cap came out at $0.01B and a company of roughly $5B was excluded for being under
+  the $300M floor, silently, with every figure in the row internally consistent. CHS
+  reports `EntityCommonStockSharesOutstanding` as **0** every quarter, which is true of
+  its common stock and useless as a denominator. A count that is zero, or under a
+  hundredth of the largest the filer has reported in four years, is now treated as
+  missing. The threshold is a hundred because a reverse split is a factor of ten or so and
+  never a hundred — and because most small counts are *correct*: AutoZone really has 16.3M
+  shares, NVR 2.7M, Seaboard 958k, and all three still screen.
 - **The 500 are the lowest CIKs in the ticker map**, which are the oldest registrants:
   useful for testing, not a representative market. The map also holds only filers that
   trade *today*, so the universe is still survivorship-biased: 447 companies deregistered
