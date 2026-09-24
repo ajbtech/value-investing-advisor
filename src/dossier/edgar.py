@@ -245,6 +245,6 @@ class EdgarClient:
         the ones that died: a per-company crawl would need to know their CIKs first, and
         not knowing them is the problem.
         """
-        from dossier.deregistrations import form_index_url
+        from dossier.formindex import form_index_url
 
         return self.get(form_index_url(year, quarter)).text

@@ -70,6 +70,8 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier thesis --cik N --bear --prepare` / `--load F` | The bear pass: attack the stored thesis, quoting filings. |
 | `dossier thesis --cik N --pass-over "REASON"` | Record a candidate that cleared screening and was passed over. |
 | `dossier deregistrations --from-year YYYY --json` | Read EDGAR's form index and record which filers stopped filing. |
+| `dossier universe --from-year YYYY [--to-year YYYY] --json` | Every filer with an annual report in those years, dead or alive, and how many the store lacks. |
+| `dossier universe ... --ingest [--limit N] --json` | Also ingest the filers the store lacks: two EDGAR requests each. |
 | `dossier recheck --json` | Re-check every open thesis against its own falsification conditions. |
 | `dossier status --json` | What the store holds and what work is pending. |
 | `dossier resume --json` | Retry everything pending or failed. |
@@ -109,7 +111,12 @@ keyless chart endpoint, which is unofficial: a `failed` result naming "delisted"
 
 - `universe` — how many filers were in the as-of universe, how many were `eligible`,
   and `excluded` counted by reason (no recent 10-K, financial track, under five years of
-  history, no recent price, no share count, under the $300M floor).
+  history, no recent price, no share count, under the $300M floor). Two reasons deserve
+  a sentence whenever they are non-zero: **"no price for a filer that later stopped
+  filing: the survivorship gap"** counts companies that were investable on the as-of
+  date but died since, and no free source prices a delisted ticker — that count *is* the
+  survivorship bias still in the run, so report it rather than letting it read as a
+  data gap. "no ticker on file" is a filer not listed today for any other reason.
 - `screens` — for each of the five: how many filers were `eligible`, how many it could
   `ranked`, how many it `flagged`, and `missing_data` counting the eligible filers it
   could not rank because a figure it needs was not reported. **Report `ranked` against
@@ -327,6 +334,13 @@ Extraction comes first because the analysis reads `document_section`, not filing
 **"What would the screens have said last year?"** — `dossier screen --as-of
 YYYY-MM-DD --json`. Everything is filtered to what was knowable on that date, prices
 included.
+
+**"Widen the universe" / "include the companies that died"** — `dossier universe
+--from-year Y --to-year Y --json` first, without `--ingest`: it reads four index files a
+year and reports `not_held`, the filers the store has never heard of. Ingesting them is
+two requests each at ten a second, so say what `not_held` will cost in time before
+passing `--ingest`. Follow it with `dossier deregistrations` over the same years, so the
+dead ones carry a terminal status and stay in every universe dated before it.
 
 **"Something died halfway"** — `dossier resume --json`. The job table makes this safe:
 work already completed is skipped, and an interrupted job loses at most one filer.

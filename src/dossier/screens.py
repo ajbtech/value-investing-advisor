@@ -23,7 +23,7 @@ import sqlite3
 from collections import Counter
 from datetime import UTC, date, datetime
 
-from dossier.asof import AsOfView
+from dossier.asof import TERMINAL_STATUSES, AsOfView
 from dossier.securities import is_common_stock
 
 #: The build plan's universe filters.
@@ -273,6 +273,8 @@ SELECT cik,
 FROM picked
 """
 
+_TERMINAL_SQL = ", ".join(f"'{status}'" for status in TERMINAL_STATUSES)
+
 UNIVERSE_SQL = f"""
 CREATE TEMP TABLE universe_screened AS
 WITH p AS (SELECT as_of FROM asof_param),
@@ -284,7 +286,7 @@ tenk AS (
   WHERE form_type IN ('10-K', '10-K/A', '10-KT') GROUP BY cik
 ),
 base AS (
-  SELECT u.cik, u.name, u.ticker, u.sic,
+  SELECT u.cik, u.name, u.ticker, u.sic, u.status,
     CASE WHEN CAST(u.sic AS INTEGER) BETWEEN {FINANCIAL_SIC[0]} AND {FINANCIAL_SIC[1]}
          THEN 'financial' ELSE 'general' END AS track,
     t.last_10k, COALESCE(y.fiscal_years, 0) AS fiscal_years, y.latest_fy_end,
@@ -309,6 +311,12 @@ SELECT cik, name, ticker, sic, track, last_10k, fiscal_years, latest_fy_end,
     WHEN track = 'financial' THEN 'financial filer: bank, insurer or REIT screens are separate'
     WHEN fiscal_years < {MIN_FISCAL_YEARS}
       THEN 'fewer than {MIN_FISCAL_YEARS} years of XBRL history'
+    -- Only a filer that died *after* the as-of date is in `universe_asof` with a
+    -- terminal status. It was investable that day, and no free source prices a ticker
+    -- that has stopped trading, so this count is the survivorship bias that remains.
+    WHEN price IS NULL AND status IN ({_TERMINAL_SQL})
+      THEN 'no price for a filer that later stopped filing: the survivorship gap'
+    WHEN ticker IS NULL THEN 'no ticker on file: not listed today, so it cannot be priced'
     WHEN NOT is_common_stock(ticker)
       THEN 'listed ticker is not common stock: ' || COALESCE(ticker, 'none')
     WHEN price IS NULL THEN 'no price within {MAX_PRICE_AGE_DAYS} days of the as-of date'
@@ -634,7 +642,9 @@ def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 #: answer from before them is the wrong answer.
 #: 5: a filer whose listed ticker is a preferred issue, warrant or unit leaves the
 #: universe rather than being priced off a security that is not its shares.
-SCREENER_VERSION = "5"
+#: 6: a filer with no ticker, or one that later stopped filing, is excluded under its own
+#: reason instead of as "not common stock: none", so the survivorship gap is counted.
+SCREENER_VERSION = "6"
 
 #: The plan asks for roughly thirty: enough to be worth analysing, few enough to afford.
 CANDIDATE_LIMIT = 30
