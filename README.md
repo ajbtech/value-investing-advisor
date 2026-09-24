@@ -58,8 +58,14 @@ What works today:
   when nothing was measured is worse than no condition at all. It does not tell you to
   sell; it tells you that you said you would, and asks whether you still mean it.
 
-Not built yet: Passes B, C and D (footnotes, earnings calls, proxy incentives), and
-scheduling the re-check, which has to be bound to the machine holding the data. `STATE.md` has the current state in
+- **Pass B, footnote forensics.** Item 8 runs past 200,000 characters, so it is split
+  into numbered notes and handed over as an index; the pass reads what matters and
+  flags policy changes, changes of estimate, related-party dealings, off-balance-sheet
+  obligations, pension assumptions and segment reclassifications — each with a quote.
+
+Not built yet: Passes C and D (earnings calls, proxy incentives), which need documents
+the store does not hold, and scheduling the re-check, which has to be bound to the
+machine holding the data. `STATE.md` has the current state in
 detail, including the limitations that are known and open.
 
 ## Install

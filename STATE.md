@@ -466,6 +466,53 @@ fallback is pre-tax income plus interest, a different measure, and mixing the tw
 filers would make Magic Formula's ranks incomparable — which is the one thing a ranked
 screen cannot trade away.
 
+## Milestone 7 begun — Pass B, footnote forensics
+
+`dossier analyze --pass b --cik N` reads Item 8. Two things make it a different job from
+Pass A rather than the same job on another section.
+
+**It hands over an index, not a section.** Kodak's Item 8 is 209,515 characters, so
+`split_notes` breaks it into numbered notes and `prepare` carries the headings and sizes
+for this year and last. The pass reads the index, picks the notes that matter, and reads
+those. Kodak's index has 29 notes this year against 27 last year.
+
+**The flags are their own vocabulary.** `policy_change`, `estimate_change`,
+`capitalisation_change`, `related_party`, `off_balance_sheet`, `pension_assumption`,
+`segment_change`. A depreciation life that was extended is not "softened"; it is a change
+of estimate, and a list of flags is only worth reading if each is called by its name. An
+invented flag is still refused.
+
+**Live on Kodak: 4 findings, 0 dropped, 0% fabrication** (prompt `pass_b_v1`), and they
+answer questions the earlier passes could only point at:
+
+- **An uncapped guarantee with nothing recorded against it.** "in the event the
+  historical liabilities exceed $99 million, the Company will become liable for 50% of
+  the portion above $99 million with no limitation to the maximum potential future
+  payments", and the same note says there is no liability recorded for it.
+- **$66 million of fourth-quarter income is a settlement release**, not cash earned:
+  "Kodak recorded a settlement gain of $66 million in the fourth quarter of 2025 which
+  represented the recognition of the remaining unrealized amounts for KRIP that were
+  included as a component of accumulated other comprehensive loss".
+- **The reversion, sized by the notes**: "The $767 million of employer reversion
+  represents the $609 million of cash and $158 million of investment assets reverted to
+  the Company". Item 7 attributes $618 million of the operating cash flow increase to
+  reversion proceeds, so the two disclosures describe one event on different bases and
+  belong side by side.
+- The US actuarial gain of $25 million is a $42 million demographic assumption gain
+  against a $51 million discount-rate loss, so the headline is smaller than either part.
+
+**What the live run changed.** Kodak renumbers its notes: this year's Note 13 is
+Guarantees where last year's was Financial Instruments, and Note 20 is Retirement Plans
+where last year's was Other Postretirement Benefits. Comparing note 13 with note 13
+would compare two unrelated disclosures with complete confidence. Prompt `pass_b_v2` says
+to match by heading, and a test holds it. The four findings above stay pinned to `v1`,
+whose words are still in the repository exactly as they were — which is the point of
+pinning a prompt rather than editing one.
+
+Passes C (earnings calls) and D (proxy incentives) are not built. Both need documents the
+store does not hold yet: call transcripts are not on EDGAR at all, and DEF 14A is a form
+`ingest` does not fetch.
+
 ## Next concrete step
 
 **The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`

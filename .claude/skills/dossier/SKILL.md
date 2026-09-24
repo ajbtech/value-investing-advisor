@@ -59,6 +59,7 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier screen ... --compare 12,24` | Also screen 12 and 24 months earlier and record what changed. |
 | `dossier analyze --pass a --cik N --prepare` | Write Pass A's input: the prompt and both Item 1A sections. |
 | `dossier analyze --pass a --cik N --item 7 --prepare` | The same, for the MD&A. Item 1A and Item 7 have a prompt each. |
+| `dossier analyze --pass b --cik N --prepare` | Pass B: the footnotes (Item 8), split into notes with an index. |
 | `dossier analyze --pass a --cik N --load F` | Read findings back, validate every quote, store what survives. |
 | `dossier value --cik N --prepare` | Write the valuation's input: the figures, the findings, the fixed rules. |
 | `dossier value --cik N --load F` | Read assumptions back, validate every justification, store the range. |
@@ -189,6 +190,25 @@ Report it to the user honestly, including when it is bad.
 Never write a finding that recommends buying or selling. The loader rejects those, but
 the reason they are rejected matters more than the check: these passes report
 observations, and judgment happens later once all four are in view.
+
+## Running Pass B — the footnotes
+
+`dossier analyze --pass b --cik N --prepare` defaults to Item 8 and hands you an **index**
+rather than one wall of text: every numbered note with its heading and size, for this
+year and last. Item 8 runs past 200,000 characters, so read the index, pick the notes
+that matter, and read those from `current.text`.
+
+**Match notes by heading, never by number.** Numbering shifts year to year — in Kodak's
+2025 filing Note 13 is Guarantees, in 2024 it was Financial Instruments.
+
+The flags are their own vocabulary, not Pass A's: `policy_change`, `estimate_change`,
+`capitalisation_change`, `related_party`, `off_balance_sheet`, `pension_assumption`,
+`segment_change`. Calling a depreciation-life extension an `estimate_change` rather than
+"softened" is what makes a list of flags worth reading. Everything else is as Pass A:
+quote verbatim, cite the accession, and the validator drops what it cannot find.
+
+Fill in `commentary` with which notes you read and found nothing in. It tells the next
+reader where you have already been.
 
 ## Running a valuation — you propose, the code decides
 
