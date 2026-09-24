@@ -27,6 +27,12 @@ from dossier.analysis import (
 )
 from dossier.asof import AsOfView, fact_count
 from dossier.config import Config
+from dossier.deregistrations import (
+    Deregistration,
+    mark_terminal_status,
+    parse_form_index,
+    unknown_ciks,
+)
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
 from dossier.extract import EXTRACTOR_VERSION, extract_filing
 from dossier.ingest import INGEST_VERSION, ingest_filer
@@ -254,6 +260,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="re-check as it would have read on this date (default: today)",
     )
 
+    deregistrations = subcommands.add_parser(
+        "deregistrations",
+        parents=[common],
+        help="find filers that stopped filing and record why, from EDGAR's form index",
+    )
+    deregistrations.add_argument(
+        "--from-year", dest="from_year", type=int, required=True, metavar="YYYY"
+    )
+    deregistrations.add_argument(
+        "--to-year",
+        dest="to_year",
+        type=int,
+        metavar="YYYY",
+        help="inclusive; defaults to --from-year",
+    )
+    deregistrations.add_argument(
+        "--ingest",
+        action="store_true",
+        help="also ingest the dead filers the store has never heard of — the "
+        "survivorship gap itself, since the ticker map can never find them",
+    )
+
     subcommands.add_parser(
         "status", parents=[common], help="what is in the store and what work is pending"
     )
@@ -295,6 +323,8 @@ def main(
             return _thesis(args, config)
         if args.command == "recheck":
             return _recheck(args, config)
+        if args.command == "deregistrations":
+            return _deregistrations(args, config, client)
         if args.command == "status":
             return _status(args, config)
         if args.command == "resume":
@@ -677,6 +707,67 @@ def _screen(args, config: Config) -> int:
     for candidate in run["candidates"]:
         trend = f"[{candidate['trend']}] " if candidate.get("trend") else ""
         print(f"  {trend}{candidate['ticker'] or candidate['cik']}: {candidate['flag_reason']}")
+    return 0
+
+
+def _deregistrations(args, config: Config, client: EdgarClient | None) -> int:
+    """Record which filers stopped filing, from the quarterly form index.
+
+    One file per quarter covers every filer in it, so this is four requests a year rather
+    than a crawl — and it is the only way to find the companies that failed, because a
+    filer that no longer trades is not in the ticker map to be looked up.
+    """
+    to_year = args.to_year or args.from_year
+    if to_year < args.from_year:
+        print("dossier deregistrations: --to-year is before --from-year", file=sys.stderr)
+        return 2
+
+    edgar = _client(client)
+    found: list[Deregistration] = []
+    quarters = []
+    for year in range(args.from_year, to_year + 1):
+        for quarter in (1, 2, 3, 4):
+            try:
+                text = edgar.form_index(year, quarter)
+            except Exception as exc:
+                # A quarter that has not happened yet, or a gap in the archive. Neither
+                # is a reason to lose the quarters that did parse.
+                quarters.append({"year": year, "quarter": quarter, "error": str(exc)[:120]})
+                continue
+            parsed = parse_form_index(text)
+            found.extend(parsed)
+            quarters.append({"year": year, "quarter": quarter, "terminal_filings": len(parsed)})
+
+    with open_store(config.store_path) as conn:
+        marked = mark_terminal_status(conn, found)
+        unknown = unknown_ciks(conn, found)
+        ingested = []
+        if args.ingest and unknown:
+            _say(args.as_json, f"Ingesting {len(unknown)} filer(s) the store did not hold")
+            queue = JobQueue(conn, output_dir=config.output_dir)
+            for record in unknown:
+                ingested.append(_ingest_one(queue, conn, edgar, record.cik, force=False))
+            mark_terminal_status(conn, found)
+
+    result = {
+        "command": "deregistrations",
+        "years": [args.from_year, to_year],
+        "quarters": quarters,
+        "terminal_filings": len(found),
+        "filers_marked": marked,
+        "unknown_ciks": len(unknown),
+        "ingested": ingested,
+    }
+    if args.as_json:
+        _emit(result)
+    else:
+        print(f"Read {len(quarters)} quarter(s): {len(found)} terminal filings")
+        print(f"Marked {marked} filer(s) the store holds")
+        print(f"{len(unknown)} dead CIK(s) the store has never heard of", end="")
+        if args.ingest:
+            print(f", ingested {len(ingested)}")
+        else:
+            print(" — pass --ingest to fetch them")
     return 0
 
 

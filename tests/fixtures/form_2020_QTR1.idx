@@ -1,0 +1,16 @@
+Description:           Master Index of EDGAR Dissemination Feed by Form Type
+Last Data Received:    March 31, 2020
+Comments:              webmaster@sec.gov
+Anonymous FTP:         ftp://ftp.sec.gov/edgar/
+
+
+Form Type   Company Name                                                  CIK         Date Filed  File Name
+---------------------------------------------------------------------------------------------------------------------------------------------
+10-K        WIDGET WORKS INC                                              0000001750  2020-02-14  edgar/data/1750/0000001750-20-000012.txt
+15-12B      DEFUNCT RETAIL HOLDINGS CORP                                  0000009876  2020-03-02  edgar/data/9876/0000009876-20-000003.txt
+15-12G      SMALL CAP MINING LTD                                          0000012345  2020-03-11  edgar/data/12345/0000012345-20-000002.txt
+15F-12B     FOREIGN ISSUER PLC                                            0000054321  2020-03-15  edgar/data/54321/0000054321-20-000004.txt
+25          BANKRUPT AIRLINES INC                                         0000031235  2020-03-20  edgar/data/31235/0000031235-20-000009.txt
+25-NSE      EXCHANGE DELISTED CO                                          0000077777  2020-03-25  edgar/data/77777/0000077777-20-000001.txt
+8-K         WIDGET WORKS INC                                              0000001750  2020-03-28  edgar/data/1750/0000001750-20-000019.txt
+DEF 14A     WIDGET WORKS INC                                              0000001750  2020-03-30  edgar/data/1750/0000001750-20-000021.txt

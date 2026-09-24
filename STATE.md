@@ -85,7 +85,10 @@ by reason (86 financials, 69 under the $300M floor, 43 without a recent 10-K).
   but the price is whichever ticker EDGAR listed first, and HEICO's two classes trade
   about 20% apart.
 - **The 500 are the lowest CIKs in the ticker map**, which are the oldest registrants:
-  useful for testing, not a representative market.
+  useful for testing, not a representative market. The map also holds only filers that
+  trade *today*, so the universe is still survivorship-biased: 447 companies deregistered
+  in 2025 alone that it cannot see. `dossier deregistrations` can now find them; building
+  the universe from the form index instead of the ticker map is what would fix it.
 - **A screen's `ranked` is not its `eligible`.** Every screen now reports both, plus
   `missing_data` counting the eligible filers it could not rank for want of a reported
   figure. Quote `rank` against `ranked` and say what `ranked` was out of: after the tag
@@ -547,6 +550,51 @@ go: the metrics were identical to last year's. `metric_mix` now exists beside
 **Pass C is not built and is not blocked on code.** Earnings-call transcripts are not on
 EDGAR in any form, so there is nothing for `ingest` to fetch: it needs a transcript
 source, which is a decision about outside data rather than a milestone to build.
+
+## Dead CIKs — the mechanism is built, and it found its own bug in ten minutes
+
+`dossier deregistrations --from-year Y [--to-year Y] [--ingest]` reads EDGAR's quarterly
+form index — one free text file per quarter covering every filer — and records who stopped
+filing. `filer.status` had been in the schema since migration 001 with nothing to set it,
+because nothing knew which CIKs had died.
+
+**The first version was wrong, and the check caught it immediately.** Scanning 2025 marked
+34 of the store's 501 filers, and 32 of them had filed a 10-K afterwards: IBM, Procter &
+Gamble, General Electric, Thermo Fisher, Avery Dennison. **Form 25 delists a security, not
+a company** — a firm retiring one note or warrant issue files it and carries on reporting.
+And `delisted_for_cause` means a total loss in any historical evaluation, so a wrong one
+would have written off live companies in every backtest that touched them.
+
+Three rules came out of that, each with a test:
+
+- **Form 25 supports no status at all.** It is collected as a pointer and never acted on
+  alone. Of 2025's 2,362 terminal filings, **1,900 were Form 25 or 25-NSE** — the noise
+  was the overwhelming majority.
+- **`delisted_for_cause` cannot come from the index**, which carries no reason for any
+  filing. It appears nowhere in the mapping now.
+- **A filer's own later report wins.** A deregistration followed by another 10-K, 10-Q or
+  20-F is a filer that deregistered one class of securities and kept going.
+
+Migration 011 resets every status the filer's own filings contradict, and every
+`delisted_for_cause`. After it, the live store reads **500 active and 1 deregistered** —
+Capital Properties, whose last 10-K was filed four days before its Form 15, which is
+exactly the shape a real one has.
+
+### The gap is real, and bigger than the sample
+
+2025 alone: **447 distinct CIKs filed a Form 15 deregistration that the store has never
+heard of.** Against 501 filers held, the hole is about as large as the entire sample, per
+year. They are absent from `company_tickers.json` because they no longer trade, so no
+amount of ingesting from that map will ever reach them.
+
+**They were deliberately not ingested, and `--ingest` is deliberately not the fix.**
+Adding 447 companies that all died within one year to a universe of 501 survivors does not
+remove survivorship bias, it inverts it: a 2024 universe would then hold the survivors plus
+a cohort selected for dying. The plan's actual instruction is to "build the universe as of
+the test date", and the same form index makes that possible properly — it lists **every
+10-K filer in every quarter**, which is the historical universe itself rather than today's
+tickers plus a correction. That is the next piece of work, and it replaces the ticker map
+as the universe source rather than patching it.
 
 ## Next concrete step
 
