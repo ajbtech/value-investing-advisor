@@ -596,6 +596,34 @@ the test date", and the same form index makes that possible properly — it list
 tickers plus a correction. That is the next piece of work, and it replaces the ticker map
 as the universe source rather than patching it.
 
+## The real universe, and how little of it the store holds
+
+`dossier registrants --from-year Y [--to-year Y] [--since DATE]` reads the same quarterly
+form index for annual reports instead of terminations, and records every CIK that filed
+one. That is the universe the plan asks for — built from who filed, not from who trades
+today — with nothing selected for having survived and so nothing to correct afterwards.
+
+**Live, 2025: 7,772 filers filed an annual report. The store holds 477 of them — 6.1%.**
+
+That number gives every other number in this file its meaning. "289 of 501 eligible" was
+never 289 of the market; it is 289 of a 6% sample of the market, chosen by lowest CIK.
+Nothing in the pipeline was wrong about it, and nothing could have said so, because
+`company_tickers.json` has no denominator to offer.
+
+A `registrant_annual` row asserts one thing: this CIK filed this form on this date. One
+row per filing rather than a per-filer summary, so re-reading a quarter is a no-op instead
+of double-counting a filer's history; `registrant` is the view that aggregates it into
+first seen, last seen and a count. No facts, no prices, no status — because screening
+needs facts and prices per filer, and the table's job is to say precisely who is missing
+and what fetching them would cost.
+
+**What this makes possible, and what it costs.** 7,295 filers are missing for 2025 alone.
+At ~2 requests each (submissions and companyfacts) and the SEC's 10-per-second limit that
+is roughly 25 minutes of ingest per year of universe, plus prices. The decision worth
+making deliberately is how wide to go: the $300M market-cap floor will exclude a large
+share of those 7,295 after ingest, and the plan's own advice is to start at $300M for
+clean data and push the floor down later.
+
 ## Next concrete step
 
 **The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`

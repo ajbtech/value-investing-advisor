@@ -39,6 +39,7 @@ from dossier.ingest import INGEST_VERSION, ingest_filer
 from dossier.jobs import JobQueue, idempotency_key
 from dossier.prices import YahooPrices, store_prices
 from dossier.recheck import recheck_all, recheck_thesis
+from dossier.registrants import coverage, parse_annual_filers, store_registrants
 from dossier.screens import (
     CANDIDATE_LIMIT,
     SCREENER_VERSION,
@@ -282,6 +283,27 @@ def build_parser() -> argparse.ArgumentParser:
         "survivorship gap itself, since the ticker map can never find them",
     )
 
+    registrants = subcommands.add_parser(
+        "registrants",
+        parents=[common],
+        help="record every annual-report filer from EDGAR's form index: the real universe",
+    )
+    registrants.add_argument(
+        "--from-year", dest="from_year", type=int, required=True, metavar="YYYY"
+    )
+    registrants.add_argument(
+        "--to-year",
+        dest="to_year",
+        type=int,
+        metavar="YYYY",
+        help="inclusive; defaults to --from-year",
+    )
+    registrants.add_argument(
+        "--since",
+        metavar="YYYY-MM-DD",
+        help="report coverage against filers whose last annual report is on or after this",
+    )
+
     subcommands.add_parser(
         "status", parents=[common], help="what is in the store and what work is pending"
     )
@@ -325,6 +347,8 @@ def main(
             return _recheck(args, config)
         if args.command == "deregistrations":
             return _deregistrations(args, config, client)
+        if args.command == "registrants":
+            return _registrants(args, config, client)
         if args.command == "status":
             return _status(args, config)
         if args.command == "resume":
@@ -707,6 +731,64 @@ def _screen(args, config: Config) -> int:
     for candidate in run["candidates"]:
         trend = f"[{candidate['trend']}] " if candidate.get("trend") else ""
         print(f"  {trend}{candidate['ticker'] or candidate['cik']}: {candidate['flag_reason']}")
+    return 0
+
+
+def _registrants(args, config: Config, client: EdgarClient | None) -> int:
+    """Record every annual-report filer, which is the universe the plan asks for.
+
+    A `registrant` row asserts only that a CIK filed an annual report on a date. It gives
+    every other count its meaning: screening 289 filers says nothing until it is 289 of
+    something, and `company_tickers.json` could never say what — it lists what trades
+    today, so every company that failed has already been removed from it.
+    """
+    to_year = args.to_year or args.from_year
+    if to_year < args.from_year:
+        print("dossier registrants: --to-year is before --from-year", file=sys.stderr)
+        return 2
+
+    edgar = _client(client)
+    quarters = []
+    new_filers = 0
+    with open_store(config.store_path) as conn:
+        for year in range(args.from_year, to_year + 1):
+            for quarter in (1, 2, 3, 4):
+                try:
+                    text = edgar.form_index(year, quarter)
+                except Exception as exc:
+                    quarters.append({"year": year, "quarter": quarter, "error": str(exc)[:120]})
+                    continue
+                records = parse_annual_filers(text)
+                added = store_registrants(conn, records)
+                new_filers += added
+                quarters.append(
+                    {
+                        "year": year,
+                        "quarter": quarter,
+                        "annual_reports": len(records),
+                        "new_filers": added,
+                    }
+                )
+        report = coverage(conn, since=args.since)
+
+    result = {
+        "command": "registrants",
+        "years": [args.from_year, to_year],
+        "quarters": quarters,
+        "new_filers": new_filers,
+        "coverage": report,
+    }
+    if args.as_json:
+        _emit(result)
+    else:
+        print(f"Read {len(quarters)} quarter(s): {new_filers} filer(s) not seen before")
+        held = report["fraction_held"]
+        window = f" filing since {report['since']}" if report["since"] else ""
+        print(
+            f"Universe{window}: {report['registrants']} registrants, {report['ingested']} ingested"
+        )
+        print(f"Missing from the store: {report['missing']}", end="")
+        print(f" ({held:.1%} held)" if held is not None else "")
     return 0
 
 
