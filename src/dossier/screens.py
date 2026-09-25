@@ -58,6 +58,9 @@ ANNUAL_TAGS = [
     ("PaymentsForCapitalImprovements", "USD"),
     ("PaymentsToAcquireOtherPropertyPlantAndEquipment", "USD"),
     ("PaymentsToAcquireMachineryAndEquipment", "USD"),
+    ("PaymentsToDevelopSoftware", "USD"),
+    ("PaymentsForSoftware", "USD"),
+    ("CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization", "USD"),
     ("DepreciationDepletionAndAmortization", "USD"),
     ("DepreciationAmortizationAndAccretionNet", "USD"),
     ("Assets", "USD"),
@@ -112,8 +115,13 @@ _REVENUE = (
     'COALESCE("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", '
     '"RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet")'
 )
+#: The ex-depreciation element is last and is a different measure from cost of revenue.
+#: That is acceptable only because gross profit feeds Piotroski's margin test alone,
+#: which compares a filer with its own prior year, never with another filer.
 _COST = (
-    'COALESCE("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", "CostOfServices")'
+    'COALESCE("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", '
+    '"CostOfServices", '
+    '"CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization")'
 )
 #: Since ASC 842 many filers report property including finance-lease right-of-use assets
 #: under one element rather than `PropertyPlantAndEquipmentNet`. Tangible capital reads
@@ -131,6 +139,16 @@ _CAPEX = (
     '"PaymentsToAcquireOtherPropertyPlantAndEquipment", '
     '"PaymentsToAcquireMachineryAndEquipment")'
 )
+#: Capitalized software is capital spending that the property elements leave out:
+#: Teladoc capitalized $118.6M of it in 2025 against $8.9M the screen counted. It is
+#: added to property capex, never used alone — a filer with no property capex is still
+#: "no capex" — and never on top of `PaymentsToAcquireProductiveAssets`, which already
+#: covers intangibles and would count the same dollars twice.
+_SOFTWARE = 'COALESCE("PaymentsToDevelopSoftware", "PaymentsForSoftware", 0)'
+_CAPEX_WITH_SOFTWARE = (
+    f'{_CAPEX} + CASE WHEN "PaymentsToAcquirePropertyPlantAndEquipment" IS NULL '
+    f'AND "PaymentsToAcquireProductiveAssets" IS NOT NULL THEN 0 ELSE {_SOFTWARE} END'
+)
 _EQUITY = (
     'COALESCE("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", '
     '"StockholdersEquity")'
@@ -147,7 +165,8 @@ SELECT cik, fy_end,
   "OperatingIncomeLoss" AS ebit,
   "NetIncomeLoss" AS net_income,
   "NetCashProvidedByUsedInOperatingActivities" AS cfo,
-  {_CAPEX} AS capex,
+  {_CAPEX_WITH_SOFTWARE} AS capex,
+  {_SOFTWARE} AS capitalized_software,
   COALESCE("DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet")
     AS depreciation,
   "Assets" AS assets,
@@ -644,7 +663,9 @@ def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 #: universe rather than being priced off a security that is not its shares.
 #: 6: a filer with no ticker, or one that later stopped filing, is excluded under its own
 #: reason instead of as "not common stock: none", so the survivorship gap is counted.
-SCREENER_VERSION = "6"
+#: 7: capex includes capitalized software, and gross profit falls back to the
+#: ex-depreciation cost element.
+SCREENER_VERSION = "7"
 
 #: The plan asks for roughly thirty: enough to be worth analysing, few enough to afford.
 CANDIDATE_LIMIT = 30

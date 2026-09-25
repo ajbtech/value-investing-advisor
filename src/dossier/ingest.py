@@ -70,6 +70,12 @@ SCREEN_TAGS: frozenset[str] = frozenset(
         "PaymentsForCapitalImprovements",
         "PaymentsToAcquireOtherPropertyPlantAndEquipment",
         "PaymentsToAcquireMachineryAndEquipment",
+        # Capitalized software is capital spending the property elements leave out.
+        # Teladoc's free cash flow deducts $118.6M of it; the screen counted $8.9M.
+        "PaymentsToDevelopSoftware",
+        "PaymentsForSoftware",
+        # A different cost measure, read last and for Piotroski's margin test only.
+        "CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization",
         # Same fragility, three more times. Gross profit was missing for 63 of 289
         # eligible filers, which cost every one of them a Piotroski score, because a
         # filer using `CostOfGoodsSold` or `CostOfServices` matched nothing. And since
