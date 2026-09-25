@@ -215,6 +215,22 @@ class TestPageNumbers:
         assert "Net sales 1,043 998" in text
         assert "Gross profit 210" in text
 
+    def test_a_heading_at_the_top_of_a_page_is_not_joined_to_the_one_before(self):
+        """Found live, on 5 of 21 extracted 10-Ks. "ITEM 6. [RESERVED]" ends a page with
+        no full stop, and the next page opens "ITEM 7.". The mid-sentence rule is meant
+        to fire only when the next line starts lower-case, but it was compiled
+        case-insensitively, so it glued the two headings onto one line and Item 7 —
+        the whole MD&A — was never found."""
+        text = normalise(
+            "<p>ITEM 6. [RESERVED]</p><p>36</p><p>ITEM 7. MANAGEMENT&#8217;S DISCUSSION "
+            "AND ANALYSIS OF FINANCIAL CONDITION AND RESULTS OF OPERATIONS</p>"
+        )
+        assert "\nITEM 7. MANAGEMENT" in text
+
+    def test_a_capitalised_line_after_a_page_break_starts_a_new_line(self):
+        text = normalise("<p>Liquidity and Capital Resources</p><p>41</p><p>Cash flows</p>")
+        assert "Liquidity and Capital Resources\nCash flows" in text
+
     def test_a_page_number_between_paragraphs_is_dropped(self):
         text = normalise("<p>First paragraph ends here.</p><p>12</p><p>Second begins.</p>")
         assert "\n12\n" not in text
