@@ -49,6 +49,8 @@ Every command takes `--json` and emits parseable output on stdout with nothing e
 | `dossier ingest --cik N --json` | Fetch one filer from EDGAR into the store. Repeatable. |
 | `dossier ingest --limit N --json` | Fetch the first N filers from the ticker map. |
 | `dossier ingest ... --force --json` | Re-run filers already ingested. |
+| `dossier ingest --bulk [--cik N] --json` | Facts for filers already in the store, from the nightly `companyfacts.zip` kept in the data dir. Downloads it only if missing. |
+| `dossier ingest --bulk --refresh --json` | The same, fetching a fresh ZIP first (about a gigabyte, one request). |
 | `dossier extract --cik N --json` | Pull Item sections out of that filer's 10-Ks. |
 | `dossier extract --accession A --json` | Extract one named filing. |
 | `dossier extract ... --force --json` | Re-extract filings already done. |
@@ -322,6 +324,13 @@ Do not suggest selling — that was never this tool's call.
 
 **"What's in the store?"** — `dossier status --json`, then report filers, filings, facts
 and any resumable jobs. If `resumable` is above zero, say so and offer to resume.
+
+**"Add a tag" / "refresh the facts"** — `dossier ingest --bulk --json`. Ingest keeps
+only the tags in `SCREEN_TAGS` and discards the rest, so a new tag means reading every
+filer's facts again; from the ZIP on disk that is a local re-parse with no SEC requests.
+Pass `--refresh` when the facts themselves should be newer. Per-filer `ingest` is still
+what adds a filer and its filings; the ZIP only supplies facts, and refuses a filer the
+store does not hold.
 
 **"Ingest Apple"** — CIKs are what the CLI takes, not tickers. Apple is 320193. If the
 user gives a ticker you are not certain of, ingest by CIK only once you have confirmed

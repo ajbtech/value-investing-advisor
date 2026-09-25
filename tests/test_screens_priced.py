@@ -106,6 +106,60 @@ class TestOwnerEarnings:
         assert 1 not in run(store, "owner_earnings")
 
 
+class TestCapitalizedSoftwareIsCapex:
+    """Found live on Teladoc: an 83.1% owner earnings yield from a maintenance capex of
+    $8.9M, while the company's own free cash flow deducts "capital expenditures and
+    capitalized software development costs" — $118.6M of software in 2025. The screen
+    read property and equipment only, so every filer that builds its own software had
+    its owner earnings overstated by exactly that spend.
+
+    Depreciation here is amortisation-heavy, as Teladoc's is, so capex is the smaller of
+    the two and the software actually reaches maintenance capex."""
+
+    AMORTISATION_HEAVY = {"DepreciationDepletionAndAmortization": 300_000_000}
+
+    @pytest.mark.parametrize("tag", ["PaymentsToDevelopSoftware", "PaymentsForSoftware"])
+    def test_software_spend_is_added_to_capex(self, store, tag):
+        eligible_filer(StoreBuilder(store), 1, **self.AMORTISATION_HEAVY, **{tag: 40_000_000})
+        row = run(store, "owner_earnings")[1]
+        assert row["maintenance_capex"] == pytest.approx(100_000_000)
+        assert row["owner_earnings_yield"] == pytest.approx(180 / 1950)
+
+    def test_without_software_nothing_changes(self, store):
+        eligible_filer(StoreBuilder(store), 1, **self.AMORTISATION_HEAVY)
+        assert run(store, "owner_earnings")[1]["maintenance_capex"] == pytest.approx(60_000_000)
+
+    def test_productive_assets_already_include_it(self, store):
+        """`PaymentsToAcquireProductiveAssets` covers intangibles as well as property.
+        Adding software to it would count the same dollars twice."""
+        eligible_filer(
+            StoreBuilder(store),
+            1,
+            **self.AMORTISATION_HEAVY,
+            PaymentsToAcquirePropertyPlantAndEquipment=None,
+            PaymentsToAcquireProductiveAssets=60_000_000,
+            PaymentsToDevelopSoftware=40_000_000,
+        )
+        assert run(store, "owner_earnings")[1]["maintenance_capex"] == pytest.approx(60_000_000)
+
+    def test_software_alone_does_not_invent_a_capex_figure(self, store):
+        """A filer with no property capex reported is still 'no capex', not a filer
+        whose whole capital spend is its software."""
+        eligible_filer(
+            StoreBuilder(store),
+            1,
+            PaymentsToAcquirePropertyPlantAndEquipment=None,
+            PaymentsToDevelopSoftware=40_000_000,
+        )
+        rows = run(store, "owner_earnings")
+        assert 1 not in rows or rows[1]["rank"] is None
+
+    def test_free_cash_flow_deducts_it_too(self, store):
+        quality_filer(StoreBuilder(store), 1, PaymentsToDevelopSoftware=40_000_000)
+        row = run(store, "quality_at_price")[1]
+        assert row["fcf_yield"] == pytest.approx((280 - 60 - 40) / 2000)
+
+
 def quality_filer(b, cik, years=range(2018, 2025), **overrides):
     b.filer(cik, name=f"Filer {cik}")
     b.history(cik, list(years), **{**HEALTHY, **overrides})

@@ -89,13 +89,43 @@ class TestTheOtherSingleTagGaps:
     of 289 eligible filers — every one of them losing a Piotroski score, because the
     score needs all nine tests — and property for 53, which cost a Magic Formula rank."""
 
-    @pytest.mark.parametrize("tag", ["CostOfGoodsSold", "CostOfServices"])
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "CostOfGoodsSold",
+            "CostOfServices",
+            # AEP, Cheniere and 434 others in the 2026-09-24 ZIP. A different measure from
+            # cost of revenue, which is acceptable only because gross profit feeds
+            # Piotroski's margin test alone, and that compares a filer with itself.
+            "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
+        ],
+    )
     def test_gross_profit_survives_a_legacy_cost_element(self, store, tag):
         b = StoreBuilder(store)
         eligible_filer(b, 1, CostOfRevenue=None, **{tag: 1_200_000_000})
         b.done()
         prepare(store, AS_OF)
         assert by_cik(annual_rows(store, 1))[1]["gross_profit"] == 800_000_000
+
+    def test_the_cost_of_revenue_wins_over_the_ex_depreciation_measure(self, store):
+        b = StoreBuilder(store)
+        eligible_filer(
+            b,
+            1,
+            CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization=900_000_000,
+        )
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(annual_rows(store, 1))[1]["gross_profit"] == 800_000_000
+
+    def test_ingest_keeps_the_new_elements(self):
+        from dossier.ingest import SCREEN_TAGS
+
+        assert {
+            "PaymentsToDevelopSoftware",
+            "PaymentsForSoftware",
+            "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
+        } <= SCREEN_TAGS
 
     def test_property_is_read_from_the_finance_lease_element(self, store):
         """ASC 842 moved where many filers report property. They did not stop owning

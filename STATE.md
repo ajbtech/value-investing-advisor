@@ -475,15 +475,16 @@ run with `--compare 12,24` gives 10 persistent, 9 new, 6 recent, 5 returning, an
 histories moved too, because the earlier dates were re-screened with the same widened
 tags.
 
-**Still missing: gross profit for 62 eligible filers, 36 of which do report a cost
-element.** American Airlines, American Electric Power, Cheniere, Matson and Howmet
-almost certainly use
-`CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization`, which is a
-different measure from cost of revenue. Adding it is defensible *here specifically*,
-because gross profit feeds only Piotroski's margin test, which compares a filer with its
-own prior year rather than with other filers — so per-filer consistency is what matters
-and cross-filer comparability is not at stake. It needs another full re-ingest, so it
-should be batched with any other tag work rather than run on its own.
+**Gross profit for 62 eligible filers, 36 of which report a cost element — now read.**
+The element is `CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization`
+(singular "Service", no "Sold"); 436 filers in the 2026-09-24 ZIP use it, AEP and
+Cheniere among them, American Airlines not. This file first spelled it
+`CostOfGoodsAndServicesSold...`, the code copied that, and the bulk run matched **0
+filers** — every test passed, because tests build facts under whatever name the code
+uses. **Check a new tag's spelling against the ZIP before trusting it**; `dossier.bulk`
+makes that a local grep. It is a different measure from cost of revenue, defensible
+because gross profit feeds only Piotroski's margin test, which compares a filer with
+itself.
 
 **Operating income, missing for 44 filers, is deliberately left alone.** The available
 fallback is pre-tax income plus interest, a different measure, and mixing the two across
