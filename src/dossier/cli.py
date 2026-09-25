@@ -15,6 +15,8 @@ import argparse
 import json
 import sys
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -379,6 +381,9 @@ def main(
             return _status(args, config)
         if args.command == "resume":
             return _resume(args, config, client, prices)
+    except UsageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except InvalidUserAgent as exc:
         # The most likely first-run failure in the whole tool. It should read as an
         # instruction, not as a stack trace — and never on stdout, which may be a pipe.
@@ -388,6 +393,43 @@ def main(
         print(str(exc), file=sys.stderr)
         return 2
     return 2
+
+
+class UsageError(Exception):
+    """Something the command was asked to do that it cannot: stderr, and exit 2."""
+
+    def __init__(self, command: str, message: str) -> None:
+        super().__init__(f"dossier {command}: {message}")
+
+
+@contextmanager
+def _refusals_as_usage(command: str) -> Iterator[None]:
+    """The domain modules refuse bad requests with ValueError; the CLI reports them."""
+    try:
+        yield
+    except ValueError as exc:
+        raise UsageError(command, str(exc)) from exc
+
+
+def _read_payload(command: str, path: str) -> dict:
+    """The JSON a model wrote for `--load`."""
+    source = Path(path)
+    if not source.exists():
+        raise UsageError(command, f"no such file {source}")
+    try:
+        return json.loads(source.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise UsageError(command, f"{source} is not valid JSON — {exc}") from exc
+
+
+def _hand_over(args, payload: dict, what: str) -> int:
+    """Write a prepared input to `--out`, stdout, or both under `--json`."""
+    if args.out:
+        Path(args.out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _say(args.as_json, f"Wrote {what} input to {args.out}")
+    if args.as_json or not args.out:
+        _emit(payload)
+    return 0
 
 
 def _emit(payload: dict) -> None:
@@ -524,8 +566,7 @@ def _ingest(args, config: Config, client: EdgarClient | None) -> int:
         # The universe, cheapest step first: the ticker map is one small request.
         ciks = sorted(edgar.ticker_map())[: args.limit]
     if not ciks:
-        print("dossier ingest: give it --cik or --limit", file=sys.stderr)
-        return 2
+        raise UsageError("ingest", "give it --cik or --limit")
 
     _say(args.as_json, f"Ingesting {len(ciks)} filer(s) into {config.store_path}")
     results = []
@@ -604,8 +645,7 @@ def _describe_extract(result: dict) -> str:
 
 def _extract(args, config: Config, client: EdgarClient | None) -> int:
     if args.cik is None and args.accession is None:
-        print("dossier extract: give it --cik or --accession", file=sys.stderr)
-        return 2
+        raise UsageError("extract", "give it --cik or --accession")
 
     results = []
     with open_store(config.store_path) as conn:
@@ -700,8 +740,7 @@ def _prices(args, config: Config, source: YahooPrices | None) -> int:
         if args.all:
             ciks += priceable_ciks(conn)
         if not ciks:
-            print("dossier prices: give it --cik or --all", file=sys.stderr)
-            return 2
+            raise UsageError("prices", "give it --cik or --all")
 
         owned = source is None
         source = source or YahooPrices()
@@ -740,9 +779,8 @@ def _screen(args, config: Config) -> int:
     as_of = args.as_of or date.today()
     try:
         compare = tuple(int(part) for part in args.compare.split(",")) if args.compare else ()
-    except ValueError:
-        print("dossier screen: --compare takes months, e.g. --compare 12,24", file=sys.stderr)
-        return 2
+    except ValueError as exc:
+        raise UsageError("screen", "--compare takes months, e.g. --compare 12,24") from exc
     with open_store(config.store_path) as conn:
         queue = JobQueue(conn, output_dir=config.output_dir)
         inputs = {
@@ -802,8 +840,7 @@ def _deregistrations(args, config: Config, client: EdgarClient | None) -> int:
     """
     to_year = args.to_year or args.from_year
     if to_year < args.from_year:
-        print("dossier deregistrations: --to-year is before --from-year", file=sys.stderr)
-        return 2
+        raise UsageError("deregistrations", "--to-year is before --from-year")
 
     edgar = _client(client)
     found, quarters = read_quarters(
@@ -856,8 +893,7 @@ def _universe(args, config: Config, client: EdgarClient | None) -> int:
     """
     to_year = args.to_year or args.from_year
     if to_year < args.from_year:
-        print("dossier universe: --to-year is before --from-year", file=sys.stderr)
-        return 2
+        raise UsageError("universe", "--to-year is before --from-year")
 
     edgar = _client(client)
     found, quarters = read_quarters(
@@ -910,27 +946,22 @@ def _recheck(args, config: Config) -> int:
     Exit 1 when anything was breached or could not be checked, so a scheduled run that
     nobody reads still says something a machine can act on.
     """
-    with open_store(config.store_path) as conn:
-        try:
-            if args.cik:
-                as_of = args.as_of or latest_as_of(conn, args.cik)
-                if as_of is None:
-                    print(f"dossier recheck: no thesis for CIK {args.cik}", file=sys.stderr)
-                    return 2
-                reports = [
-                    recheck_thesis(
-                        conn,
-                        cik=args.cik,
-                        as_of=as_of,
-                        on=args.on,
-                        journal_dir=config.journal_dir,
-                    )
-                ]
-            else:
-                reports = recheck_all(conn, on=args.on, journal_dir=config.journal_dir)
-        except ValueError as exc:
-            print(f"dossier recheck: {exc}", file=sys.stderr)
-            return 2
+    with open_store(config.store_path) as conn, _refusals_as_usage("recheck"):
+        if args.cik:
+            as_of = args.as_of or latest_as_of(conn, args.cik)
+            if as_of is None:
+                raise UsageError("recheck", f"no thesis for CIK {args.cik}")
+            reports = [
+                recheck_thesis(
+                    conn,
+                    cik=args.cik,
+                    as_of=as_of,
+                    on=args.on,
+                    journal_dir=config.journal_dir,
+                )
+            ]
+        else:
+            reports = recheck_all(conn, on=args.on, journal_dir=config.journal_dir)
 
     if args.as_json:
         _emit({"command": "recheck", "reports": reports})
@@ -976,11 +1007,8 @@ def _thesis(args, config: Config) -> int:
     journal_dir = config.journal_dir
 
     if args.pass_over:
-        try:
+        with _refusals_as_usage("thesis"):
             path = record_pass_over(journal_dir, cik=args.cik, as_of=as_of, reason=args.pass_over)
-        except ValueError as exc:
-            print(f"dossier thesis: {exc}", file=sys.stderr)
-            return 2
         result = {"command": "thesis", "kind": "pass_over", "cik": args.cik, "journal_entry": path}
         if args.as_json:
             _emit(result)
@@ -989,47 +1017,17 @@ def _thesis(args, config: Config) -> int:
         return 0
 
     if not args.prepare and not args.load:
-        print(
-            "dossier thesis: give it --prepare, --load FILE or --pass-over REASON", file=sys.stderr
-        )
-        return 2
+        raise UsageError("thesis", "give it --prepare, --load FILE or --pass-over REASON")
 
-    with open_store(config.store_path) as conn:
-        prepare = prepare_bear_pass if args.bear else prepare_thesis
+    with open_store(config.store_path) as conn, _refusals_as_usage("thesis"):
         if args.prepare:
-            try:
-                payload = prepare(conn, cik=args.cik, as_of=as_of)
-            except ValueError as exc:
-                print(f"dossier thesis: {exc}", file=sys.stderr)
-                return 2
-            if args.out:
-                Path(args.out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-                _say(
-                    args.as_json,
-                    f"Wrote {'bear pass' if args.bear else 'thesis'} input to {args.out}",
-                )
-            if args.as_json or not args.out:
-                _emit(payload)
-            return 0
+            prepare = prepare_bear_pass if args.bear else prepare_thesis
+            payload = prepare(conn, cik=args.cik, as_of=as_of)
+            return _hand_over(args, payload, "bear pass" if args.bear else "thesis")
 
-        source = Path(args.load)
-        if not source.exists():
-            print(f"dossier thesis: no such file {source}", file=sys.stderr)
-            return 2
-        try:
-            proposed = json.loads(source.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            print(f"dossier thesis: {source} is not valid JSON — {exc}", file=sys.stderr)
-            return 2
-
+        proposed = _read_payload("thesis", args.load)
         load = load_bear_pass if args.bear else load_thesis
-        try:
-            result = load(
-                conn, cik=args.cik, as_of=as_of, payload=proposed, journal_dir=journal_dir
-            )
-        except ValueError as exc:
-            print(f"dossier thesis: {exc}", file=sys.stderr)
-            return 2
+        result = load(conn, cik=args.cik, as_of=as_of, payload=proposed, journal_dir=journal_dir)
 
     if args.as_json:
         _emit(result)
@@ -1056,39 +1054,15 @@ def _value(args, config: Config) -> int:
     justification each. Nothing is stored unless every one of them passes.
     """
     if not args.prepare and not args.load:
-        print("dossier value: give it --prepare or --load FILE", file=sys.stderr)
-        return 2
+        raise UsageError("value", "give it --prepare or --load FILE")
 
     as_of = args.as_of or date.today().isoformat()
-    with open_store(config.store_path) as conn:
+    with open_store(config.store_path) as conn, _refusals_as_usage("value"):
         if args.prepare:
-            try:
-                payload = prepare_valuation(conn, cik=args.cik, as_of=as_of)
-            except ValueError as exc:
-                print(f"dossier value: {exc}", file=sys.stderr)
-                return 2
-            if args.out:
-                Path(args.out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-                _say(args.as_json, f"Wrote valuation input to {args.out}")
-            if args.as_json or not args.out:
-                _emit(payload)
-            return 0
-
-        source = Path(args.load)
-        if not source.exists():
-            print(f"dossier value: no such file {source}", file=sys.stderr)
-            return 2
-        try:
-            proposed = json.loads(source.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            print(f"dossier value: {source} is not valid JSON — {exc}", file=sys.stderr)
-            return 2
-
-        try:
-            result = load_valuation(conn, cik=args.cik, as_of=as_of, payload=proposed)
-        except ValueError as exc:
-            print(f"dossier value: {exc}", file=sys.stderr)
-            return 2
+            payload = prepare_valuation(conn, cik=args.cik, as_of=as_of)
+            return _hand_over(args, payload, "valuation")
+        proposed = _read_payload("value", args.load)
+        result = load_valuation(conn, cik=args.cik, as_of=as_of, payload=proposed)
 
     if args.as_json:
         _emit(result)
@@ -1117,53 +1091,29 @@ def _analyze(args, config: Config) -> int:
     and puts them through the validator.
     """
     if not args.prepare and not args.load:
-        print("dossier analyze: give it --prepare or --load FILE", file=sys.stderr)
-        return 2
+        raise UsageError("analyze", "give it --prepare or --load FILE")
 
     # Each pass reads its own section, so the default follows the pass rather than
     # making every caller remember that footnote forensics means Item 8.
     item = args.item or {"b": "8", "d": "CDA"}.get(args.pass_name, "1A")
 
-    with open_store(config.store_path) as conn:
+    with open_store(config.store_path) as conn, _refusals_as_usage("analyze"):
         if args.prepare:
-            try:
-                if args.pass_name == "b":
-                    payload = prepare_pass_b(conn, cik=args.cik, item=item)
-                elif args.pass_name == "d":
-                    payload = prepare_pass_d(conn, cik=args.cik, item=item)
-                else:
-                    payload = prepare_pass_a(conn, cik=args.cik, item=item).to_dict()
-            except ValueError as exc:
-                print(f"dossier analyze: {exc}", file=sys.stderr)
-                return 2
-            if args.out:
-                Path(args.out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-                _say(args.as_json, f"Wrote Pass {args.pass_name} input to {args.out}")
-            if args.as_json or not args.out:
-                _emit(payload)
-            return 0
+            if args.pass_name == "b":
+                payload = prepare_pass_b(conn, cik=args.cik, item=item)
+            elif args.pass_name == "d":
+                payload = prepare_pass_d(conn, cik=args.cik, item=item)
+            else:
+                payload = prepare_pass_a(conn, cik=args.cik, item=item).to_dict()
+            return _hand_over(args, payload, f"Pass {args.pass_name}")
 
-        source = Path(args.load)
-        if not source.exists():
-            print(f"dossier analyze: no such file {source}", file=sys.stderr)
-            return 2
-        try:
-            findings_payload = json.loads(source.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            print(f"dossier analyze: {source} is not valid JSON — {exc}", file=sys.stderr)
-            return 2
-
-        try:
-            result = load_findings(
-                conn,
-                cik=args.cik,
-                payload=findings_payload,
-                item=item,
-                pass_name=args.pass_name,
-            )
-        except ValueError as exc:
-            print(f"dossier analyze: {exc}", file=sys.stderr)
-            return 2
+        result = load_findings(
+            conn,
+            cik=args.cik,
+            payload=_read_payload("analyze", args.load),
+            item=item,
+            pass_name=args.pass_name,
+        )
 
     if args.as_json:
         _emit(
