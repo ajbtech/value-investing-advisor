@@ -372,6 +372,11 @@ def ingest_filer(
     return result
 
 
+def held_ciks(conn: sqlite3.Connection) -> list[int]:
+    """Every filer in the store, in CIK order."""
+    return [row[0] for row in conn.execute("SELECT cik FROM filer ORDER BY cik")]
+
+
 def ingest_facts(
     conn: sqlite3.Connection,
     cik: int,

@@ -345,6 +345,28 @@ def store_sections(
     return result
 
 
+def filings_to_extract(
+    conn: sqlite3.Connection,
+    *,
+    cik: int | None = None,
+    form: str = "10-K",
+    accession: str | None = None,
+) -> list[sqlite3.Row]:
+    """One named filing, or a filer's filings of one form, newest first.
+
+    Pass A diffs consecutive 10-Ks and Pass B reads their footnotes; Pass D reads the
+    proxy. Nothing else in the store is worth the fetch.
+    """
+    if accession is not None:
+        return conn.execute("SELECT * FROM filing WHERE accession_no = ?", (accession,)).fetchall()
+    if cik is None:
+        raise ValueError("name a filer or a filing to extract")
+    return conn.execute(
+        "SELECT * FROM filing WHERE cik = ? AND form_type = ? ORDER BY filed_date DESC",
+        (cik, form),
+    ).fetchall()
+
+
 def extract_filing(
     conn: sqlite3.Connection,
     accession_no: str,

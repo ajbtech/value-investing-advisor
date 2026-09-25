@@ -35,6 +35,24 @@ MAX_REQUESTS_PER_SECOND = 2
 
 PRICES_JOB = "fetch_prices"
 
+#: `ticker_of` for a CIK the store has no filer row for, as distinct from a filer that
+#: has no ticker. The first needs `dossier ingest`; the second has nothing to price.
+NOT_INGESTED = object()
+
+
+def ticker_of(conn: sqlite3.Connection, cik: int) -> str | None | object:
+    """The filer's listed ticker, None if it has none, or NOT_INGESTED."""
+    row = conn.execute("SELECT ticker FROM filer WHERE cik = ?", (cik,)).fetchone()
+    return NOT_INGESTED if row is None else row["ticker"]
+
+
+def priceable_ciks(conn: sqlite3.Connection) -> list[int]:
+    """Every filer with a ticker to price, in CIK order."""
+    return [
+        row[0]
+        for row in conn.execute("SELECT cik FROM filer WHERE ticker IS NOT NULL ORDER BY cik")
+    ]
+
 
 class PriceSourceError(RuntimeError):
     """The price source refused the request or returned no data."""

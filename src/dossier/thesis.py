@@ -277,6 +277,12 @@ def stored_thesis(
     }
 
 
+def latest_as_of(conn: sqlite3.Connection, cik: int) -> str | None:
+    """The as-of date of the filer's most recent thesis, or None if it has none."""
+    row = conn.execute("SELECT MAX(as_of) AS as_of FROM thesis WHERE cik = ?", (cik,)).fetchone()
+    return row["as_of"] if row else None
+
+
 # -- the bear pass -------------------------------------------------------------------
 
 

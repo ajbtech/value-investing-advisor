@@ -36,16 +36,25 @@ from dossier.deregistrations import (
     unknown_ciks,
 )
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
-from dossier.extract import EXTRACT_JOB, EXTRACTOR_VERSION, extract_filing
+from dossier.extract import EXTRACT_JOB, EXTRACTOR_VERSION, extract_filing, filings_to_extract
 from dossier.ingest import (
     BULK_FACTS_JOB,
     INGEST_JOB,
     INGEST_VERSION,
+    held_ciks,
     ingest_facts,
     ingest_filer,
 )
 from dossier.jobs import JobQueue, Outcome
-from dossier.prices import PRICES_JOB, NoPriceData, YahooPrices, store_prices
+from dossier.prices import (
+    NOT_INGESTED,
+    PRICES_JOB,
+    NoPriceData,
+    YahooPrices,
+    priceable_ciks,
+    store_prices,
+    ticker_of,
+)
 from dossier.recheck import recheck_all, recheck_thesis
 from dossier.screens import (
     CANDIDATE_LIMIT,
@@ -54,8 +63,9 @@ from dossier.screens import (
     build_candidates,
     store_candidates,
 )
-from dossier.store import open_store
+from dossier.store import open_store, row_counts
 from dossier.thesis import (
+    latest_as_of,
     load_bear_pass,
     load_thesis,
     prepare_bear_pass,
@@ -486,9 +496,7 @@ def _ingest_bulk(args, config: Config, client: EdgarClient | None) -> int:
 
     results = []
     with open_store(config.store_path) as conn, zipfile.ZipFile(path) as zf:
-        ciks = list(args.cik) or [
-            row[0] for row in conn.execute("SELECT cik FROM filer ORDER BY cik")
-        ]
+        ciks = list(args.cik) or held_ciks(conn)
         _say(args.as_json, f"Reading facts for {len(ciks)} filer(s) from the {version} ZIP")
         queue = JobQueue(conn, output_dir=config.output_dir)
         for cik in ciks:
@@ -605,17 +613,7 @@ def _extract(args, config: Config, client: EdgarClient | None) -> int:
 
     results = []
     with open_store(config.store_path) as conn:
-        if args.accession is not None:
-            filings = conn.execute(
-                "SELECT * FROM filing WHERE accession_no = ?", (args.accession,)
-            ).fetchall()
-        else:
-            # Pass A diffs consecutive 10-Ks and Pass B reads their footnotes; Pass D
-            # reads the proxy. Nothing else in the store is worth the fetch.
-            filings = conn.execute(
-                "SELECT * FROM filing WHERE cik = ? AND form_type = ? ORDER BY filed_date DESC",
-                (args.cik, args.form),
-            ).fetchall()
+        filings = filings_to_extract(conn, cik=args.cik, form=args.form, accession=args.accession)
         if args.limit is not None:
             filings = filings[: args.limit]
 
@@ -652,12 +650,11 @@ def _prices_one(
     day it runs through: re-running the same day is a cache hit, the next day is not.
     """
     result: dict = {"cik": cik, "ticker": None, "status": None, "error": None}
-    filer = conn.execute("SELECT ticker FROM filer WHERE cik = ?", (cik,)).fetchone()
-    if filer is None:
+    ticker = ticker_of(conn, cik)
+    if ticker is NOT_INGESTED:
         result["status"] = "not_ingested"
         result["error"] = "run `dossier ingest` for this filer first"
         return result
-    ticker = filer["ticker"]
     result["ticker"] = ticker
     if not ticker:
         # Nothing to retry until ingest supplies a ticker, so this is not a failure.
@@ -705,12 +702,7 @@ def _prices(args, config: Config, source: YahooPrices | None) -> int:
     with open_store(config.store_path) as conn:
         ciks = list(args.cik)
         if args.all:
-            ciks += [
-                row["cik"]
-                for row in conn.execute(
-                    "SELECT cik FROM filer WHERE ticker IS NOT NULL ORDER BY cik"
-                )
-            ]
+            ciks += priceable_ciks(conn)
         if not ciks:
             print("dossier prices: give it --cik or --all", file=sys.stderr)
             return 2
@@ -939,12 +931,7 @@ def _recheck(args, config: Config) -> int:
     with open_store(config.store_path) as conn:
         try:
             if args.cik:
-                as_of = args.as_of
-                if as_of is None:
-                    row = conn.execute(
-                        "SELECT MAX(as_of) AS as_of FROM thesis WHERE cik = ?", (args.cik,)
-                    ).fetchone()
-                    as_of = row["as_of"] if row else None
+                as_of = args.as_of or latest_as_of(conn, args.cik)
                 if as_of is None:
                     print(f"dossier recheck: no thesis for CIK {args.cik}", file=sys.stderr)
                     return 2
@@ -1226,8 +1213,7 @@ def _status(args, config: Config) -> int:
         payload = {
             "command": "status",
             "store": str(config.store_path),
-            "filers": conn.execute("SELECT COUNT(*) FROM filer").fetchone()[0],
-            "filings": conn.execute("SELECT COUNT(*) FROM filing").fetchone()[0],
+            **row_counts(conn),
             "facts": fact_count(conn),
             "jobs": queue.status_counts(),
             "resumable": len(queue.resumable()),
