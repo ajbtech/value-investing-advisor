@@ -445,7 +445,7 @@ def _append_journal(journal_dir: Path | None, entry: dict, stem: str) -> str | N
 
     # Written and fsynced before anything reports success, for the same reason the job
     # table does it: the alternative loses work on a crash, and loses it silently.
-    with open(path, "w", encoding="utf-8") as handle:
+    with path.open("w", encoding="utf-8") as handle:
         json.dump(entry, handle, indent=2)
         handle.flush()
         os.fsync(handle.fileno())

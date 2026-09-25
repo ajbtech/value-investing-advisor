@@ -36,6 +36,13 @@ def test_tests_both_operating_systems(workflow):
     assert set(matrix["os"]) == {"ubuntu-latest", "windows-latest"}
 
 
+def test_dependencies_and_actions_get_update_prs():
+    """Dependabot proposes updates as ordinary PRs, which then have to pass ci-green."""
+    config = yaml.safe_load((WORKFLOW.parent.parent / "dependabot.yml").read_text("utf-8"))
+    ecosystems = {update["package-ecosystem"] for update in config["updates"]}
+    assert {"uv", "github-actions"} <= ecosystems
+
+
 class TestTheGateJob:
     def test_exists(self, workflow):
         assert "ci-green" in workflow["jobs"]

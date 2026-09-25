@@ -67,7 +67,9 @@ def write_durably(path: Path, payload: str | bytes) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, path)
+        # os.replace, not Path.replace: it is the seam tests inject a failed rename at
+        # (CLAUDE.md), and Path.replace reaching it is an implementation detail.
+        os.replace(tmp, path)  # noqa: PTH105
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
