@@ -664,6 +664,40 @@ securities, which is a decision about outside data rather than code.
 
 `SCREENER_VERSION` is 6, so cached screen runs recompute with the new reasons.
 
+### The MD&A pass on three one-off candidates, and two bugs it found
+
+Run 2026-09-25 against the 2026-09-24 screen. **21 findings, 0 dropped, 0%
+fabrication**, prompt `pass_a_mdna_v1`. All three flags came from the owner earnings
+screen, and in each case the filing says what the ratio cannot:
+
+- **Gold.com (1591588), owner earnings yield 95.7%.** "Operating activities provided
+  $1.223 billion and provided $152.3 million in cash for the year ended June 30, 2026 and
+  2025, respectively ... primarily due to net changes in working capital, which includes
+  deferred revenue and other advances" (0001193125-26-386799). Precious metals leases are
+  newly named as a source of liquidity and sit in that same deferred revenue line; the
+  lease balance, stated last year as $246.5 million, is no longer given in Item 7.
+- **Keros Therapeutics (1664710), owner earnings yield 80.6%, Magic Formula rank 2.**
+  "Our net income, which was primarily driven by the one-time upfront fee related to the
+  Takeda Agreement, was $87.0 million" (0001664710-26-000018). Cash runway shortened from
+  "into 2029" to "into the first half of 2028" after a $180.6 million buyout of two holders.
+- **Teladoc (1477449), owner earnings yield 83.1%.** Operating cash flow is *not* a
+  one-off — $294.4 million against $293.7 million. The screen is wrong instead: see below.
+  The pass found BetterHelp's goodwill cushion softened from "exceeded its carrying value
+  by a significant margin" to "exceeded its carrying value" (0001477449-26-000012).
+
+**Bug: page breaks hid Item 7 in 5 of 21 extracted 10-Ks** — Gold.com, and both of
+Armstrong's and Korn Ferry's, which is why those two never got an MD&A pass. The
+page-break cleaner's lower-case lookahead ran under IGNORECASE, so "ITEM 7." after "ITEM 6.
+[RESERVED]" read as a sentence carrying on. Fixed in `EXTRACTOR_VERSION` 3.
+
+**Gap: owner earnings ignores capitalized software.** Teladoc's own free cash flow
+deducts "capital expenditures and capitalized software development costs", $118.6 million
+in 2025; the screen's maintenance capex was $8.9 million, because
+`PaymentsToDevelopSoftware` is not ingested at all. Every filer that capitalizes software
+has overstated owner earnings. The fix is a tag plus a definition change, and adding a tag
+re-ingests every filer — so it should be batched with the gross-profit cost element
+below, ideally after bulk ZIP ingest makes a full re-ingest one download.
+
 ## Next concrete step
 
 **The pipeline runs end to end, on a company nobody chose by hand.** `analyze --prepare`
