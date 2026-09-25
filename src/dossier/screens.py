@@ -60,7 +60,7 @@ ANNUAL_TAGS = [
     ("PaymentsToAcquireMachineryAndEquipment", "USD"),
     ("PaymentsToDevelopSoftware", "USD"),
     ("PaymentsForSoftware", "USD"),
-    ("CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization", "USD"),
+    ("CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization", "USD"),
     ("DepreciationDepletionAndAmortization", "USD"),
     ("DepreciationAmortizationAndAccretionNet", "USD"),
     ("Assets", "USD"),
@@ -121,7 +121,7 @@ _REVENUE = (
 _COST = (
     'COALESCE("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", '
     '"CostOfServices", '
-    '"CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization")'
+    '"CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization")'
 )
 #: Since ASC 842 many filers report property including finance-lease right-of-use assets
 #: under one element rather than `PropertyPlantAndEquipmentNet`. Tangible capital reads

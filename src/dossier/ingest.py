@@ -75,7 +75,7 @@ SCREEN_TAGS: frozenset[str] = frozenset(
         "PaymentsToDevelopSoftware",
         "PaymentsForSoftware",
         # A different cost measure, read last and for Piotroski's margin test only.
-        "CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization",
+        "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
         # Same fragility, three more times. Gross profit was missing for 63 of 289
         # eligible filers, which cost every one of them a Piotroski score, because a
         # filer using `CostOfGoodsSold` or `CostOfServices` matched nothing. And since

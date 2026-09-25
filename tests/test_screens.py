@@ -94,10 +94,10 @@ class TestTheOtherSingleTagGaps:
         [
             "CostOfGoodsSold",
             "CostOfServices",
-            # American Airlines, AEP, Cheniere, Matson, Howmet. A different measure from
+            # AEP, Cheniere and 434 others in the 2026-09-24 ZIP. A different measure from
             # cost of revenue, which is acceptable only because gross profit feeds
             # Piotroski's margin test alone, and that compares a filer with itself.
-            "CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization",
+            "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
         ],
     )
     def test_gross_profit_survives_a_legacy_cost_element(self, store, tag):
@@ -112,7 +112,7 @@ class TestTheOtherSingleTagGaps:
         eligible_filer(
             b,
             1,
-            CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization=900_000_000,
+            CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization=900_000_000,
         )
         b.done()
         prepare(store, AS_OF)
@@ -124,7 +124,7 @@ class TestTheOtherSingleTagGaps:
         assert {
             "PaymentsToDevelopSoftware",
             "PaymentsForSoftware",
-            "CostOfGoodsAndServicesSoldExcludingDepreciationDepletionAndAmortization",
+            "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
         } <= SCREEN_TAGS
 
     def test_property_is_read_from_the_finance_lease_element(self, store):
