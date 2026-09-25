@@ -25,7 +25,9 @@ from datetime import UTC, datetime
 #: Bumped when the extractor's behaviour changes. It is part of every extraction job's
 #: idempotency key, so a fixed parser re-extracts rather than serving the old bad parse
 #: from cache — the same reason prompt_version exists for the analysis passes.
-EXTRACTOR_VERSION = "2"
+#: 3: a page break before a capitalised line no longer joins the lines, which had been
+#: hiding any Item heading that opened a page after one that did not end in a stop.
+EXTRACTOR_VERSION = "3"
 
 #: Sections the analysis passes actually read.
 DEFAULT_ITEMS = ("1", "1A", "1B", "2", "7", "7A", "8")
@@ -73,8 +75,11 @@ _TAG = re.compile(r"<[^>]+>")
 #: stays. Where the break interrupted a sentence — the line before does not end it and
 #: the line after starts lower-case — the sentence is closed back up.
 _FURNITURE_RUN = r"(?:\n(?:\d{1,4}|Table of Contents)[ \t]*)+\n"
+#: The lower-case test is case-sensitive on purpose, inside a pattern that is not: with
+#: IGNORECASE covering it, "ITEM 7." after "ITEM 6. [RESERVED]" read as a sentence
+#: carrying on, the two headings were joined, and the MD&A of 5 of 21 filings vanished.
 _PAGE_BREAK_MID_SENTENCE = re.compile(
-    r"(?<=[^\s.;:!?])" + _FURNITURE_RUN + r"(?=[a-z])", re.IGNORECASE
+    r"(?<=[^\s.;:!?])" + _FURNITURE_RUN + r"(?=(?-i:[a-z]))", re.IGNORECASE
 )
 _PAGE_BREAK = re.compile(_FURNITURE_RUN, re.IGNORECASE)
 
