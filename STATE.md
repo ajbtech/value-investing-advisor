@@ -617,7 +617,35 @@ the test date", and the same form index makes that possible properly — it list
 tickers plus a correction. That is the next piece of work, and it replaces the ticker map
 as the universe source rather than patching it.
 
-### The universe from the form index — built, not yet run live
+### The universe from the form index — run live, 2026-09-24
+
+`dossier universe --from-year 2020 --to-year 2026` found **10,475 filers with an annual
+report; the store held 4,442.** All 6,032 missing were ingested with `--ingest`, 0
+failures, 6.5M facts; 1,478 of them carry no XBRL facts at all. `dossier
+deregistrations` over the same years then marked **2,437 filers deregistered**, none of
+which filed a 10-K, 10-Q or 20-F after its date. The largest are acquisitions and
+take-privates — Kellanova, Nordstrom, Paramount Global, Citrix, U.S. Steel — so the
+status means "left the market", not "failed". The index cannot tell the two apart.
+
+The store now holds 12,197 filers and 21.7M facts; 6,779 have a ticker and 6,675 are
+priced. 88 tickers return "No data found" from Yahoo, now recorded as `no_data` rather
+than as failures that would sit in the resume queue forever.
+
+| as of | universe | eligible | survivorship gap | candidates |
+| --- | --- | --- | --- | --- |
+| 2026-09-24 | 9,759 | 1,930 | 0 (by definition) | 30 |
+| 2024-09-24 | 10,039 | 1,698 | **370** | — |
+
+**370 filers were in the 2024 universe and have since stopped filing, and none can be
+priced**, against 1,698 that were eligible: about 18% of what that screen could see. That
+number is the bias still in any historical run, and it is now printed rather than hidden.
+Closing it needs a price source for delisted securities.
+
+Today's 30 candidates include several whose flag is a one-off rather than a business —
+Keros Therapeutics, Gold.com, Teladoc, Criteo — and they want the Kodak treatment
+(Item 7 first) before anything else is read into them.
+
+### The universe from the form index — how it works
 
 `dossier universe --from-year Y [--to-year Y] [--ingest] [--limit N]` reads the same
 quarterly index for every `10-K`, `10-KT`, `10-K405` and `10-KSB`, and reports the
