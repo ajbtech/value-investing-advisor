@@ -8,7 +8,8 @@ knowable on the as-of date, and that every filer that drops out of the universe 
 import pytest
 
 from dossier.asof import AsOfView
-from dossier.screens import annual_rows, piotroski_rows, prepare, universe_rows
+from dossier.figures import annual_rows, universe_rows
+from dossier.screens import piotroski_rows, prepare
 from dossier.store import open_store
 from tests.builders import StoreBuilder
 

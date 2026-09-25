@@ -170,7 +170,8 @@ class TestTheUniverseStillSeesThem:
         """The whole point. On 2025-06-30 this company was trading and screening; that it
         deregistered in 2026 must not delete it from a 2025 universe, or every historical
         run silently evaluates only the survivors."""
-        from dossier.screens import prepare, universe_rows
+        from dossier.figures import universe_rows
+        from dossier.screens import prepare
 
         b = StoreBuilder(store)
         b.filer(1, name="Died Later Co", sic="3571")
