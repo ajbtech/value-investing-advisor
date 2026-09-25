@@ -29,6 +29,8 @@ from datetime import UTC, datetime
 #: hiding any Item heading that opened a page after one that did not end in a stop.
 EXTRACTOR_VERSION = "3"
 
+EXTRACT_JOB = "extract_sections"
+
 #: Sections the analysis passes actually read.
 DEFAULT_ITEMS = ("1", "1A", "1B", "2", "7", "7A", "8")
 

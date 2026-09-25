@@ -302,6 +302,8 @@ def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 #: ex-depreciation cost element.
 SCREENER_VERSION = "7"
 
+SCREEN_JOB = "screen"
+
 #: The plan asks for roughly thirty: enough to be worth analysing, few enough to afford.
 CANDIDATE_LIMIT = 30
 

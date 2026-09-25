@@ -315,6 +315,84 @@ class TestClaimByKey:
         assert queue.claim_by_key(key) is None
 
 
+class TestRun:
+    """The whole protocol in one place. Review found it written out by hand five times
+    in the CLI — check, enqueue, reopen, claim, run, fail or finish — and it is the
+    protocol CLAUDE.md is most insistent about. Five copies are five chances to put
+    "mark" before "write"."""
+
+    def test_runs_the_work_and_records_its_output(self, queue):
+        outcome = queue.run("ingest_filer", {"cik": 1}, lambda: {"facts": 3})
+        assert outcome.status == "done"
+        assert outcome.value == {"facts": 3}
+        assert json.loads(outcome.job.read_output()) == {"facts": 3}
+
+    def test_a_second_run_is_cached_and_does_no_work(self, queue):
+        queue.run("ingest_filer", {"cik": 1}, lambda: {"facts": 3})
+        calls = []
+        outcome = queue.run("ingest_filer", {"cik": 1}, lambda: calls.append(1))
+        assert outcome.status == "cached"
+        assert calls == []
+        assert json.loads(outcome.job.read_output()) == {"facts": 3}
+
+    def test_a_failure_is_recorded_and_returned_not_raised(self, queue):
+        """One bad filer must not cost the other twelve thousand."""
+
+        def boom():
+            raise RuntimeError("sec.gov said no")
+
+        outcome = queue.run("ingest_filer", {"cik": 1}, boom)
+        assert outcome.status == "failed"
+        assert outcome.error == "RuntimeError: sec.gov said no"
+        assert queue.find(outcome.job.idempotency_key).status == "failed"
+
+    def test_a_failed_job_is_retried_by_the_next_run(self, queue):
+        def boom():
+            raise RuntimeError("transient")
+
+        queue.run("ingest_filer", {"cik": 1}, boom)
+        assert queue.run("ingest_filer", {"cik": 1}, lambda: {}).status == "done"
+
+    def test_a_spent_job_is_skipped(self, queue):
+        def boom():
+            raise RuntimeError("permanent")
+
+        for _ in range(3):
+            queue.run("ingest_filer", {"cik": 1}, boom)
+        outcome = queue.run("ingest_filer", {"cik": 1}, lambda: {})
+        assert outcome.status == "skipped"
+        assert outcome.error == "too many failed attempts"
+
+    def test_force_redoes_finished_work(self, queue):
+        queue.run("ingest_filer", {"cik": 1}, lambda: {"v": 1})
+        outcome = queue.run("ingest_filer", {"cik": 1}, lambda: {"v": 2}, force=True)
+        assert outcome.status == "done"
+        assert json.loads(outcome.job.read_output()) == {"v": 2}
+
+    def test_the_prompt_version_is_part_of_the_key(self, queue):
+        queue.run("pass_a", {"cik": 1}, lambda: {}, prompt_version="v1")
+        assert queue.run("pass_a", {"cik": 1}, lambda: {}, prompt_version="v2").status == "done"
+
+    def test_the_recorded_output_can_differ_from_the_returned_value(self, queue):
+        outcome = queue.run(
+            "ingest_filer", {"cik": 1}, lambda: {"a", "b"}, record=lambda v: json.dumps(sorted(v))
+        )
+        assert outcome.value == {"a", "b"}
+        assert json.loads(outcome.job.read_output()) == ["a", "b"]
+
+    def test_output_is_on_disk_before_the_job_says_done(self, queue, monkeypatch):
+        """Write then mark, through `run` exactly as through `finish`."""
+        import dossier.jobs as jobs
+
+        def refuse(path, payload):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(jobs, "write_durably", refuse)
+        outcome = queue.run("ingest_filer", {"cik": 1}, lambda: {})
+        assert outcome.status == "failed"
+        assert queue.find(outcome.job.idempotency_key).status != "done"
+
+
 class TestReopen:
     """`--force` exists because prompts get retuned and extractors get fixed. It has to
     reset the attempt count too, or a job that failed twice comes back nearly spent."""

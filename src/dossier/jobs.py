@@ -12,9 +12,13 @@ import json
 import os
 import sqlite3
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Generic, TypeVar
+
+T = TypeVar("T")
 
 MAX_ATTEMPTS = 3
 
@@ -128,6 +132,22 @@ class Job:
         if self.output_path is None:
             raise ValueError(f"job {self.job_id} has no output on disk")
         return Path(self.output_path).read_text(encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class Outcome(Generic[T]):
+    """What happened to one unit of work handed to `JobQueue.run`.
+
+    `status` is `done` (the work ran and its output is on disk), `cached` (it had
+    already been done), `failed` (it raised; `error` says what) or `skipped` (it has
+    failed too many times to try again). `value` is the work's return value, and only
+    exists when the work ran this time.
+    """
+
+    status: str
+    job: Job
+    value: T | None = None
+    error: str | None = None
 
 
 class JobQueue:
@@ -286,6 +306,46 @@ class JobQueue:
                 (error, job.job_id),
             )
         return self.get(job.job_id)
+
+    # -- the protocol ------------------------------------------------------------
+
+    def run(
+        self,
+        job_type: str,
+        inputs: dict,
+        work: Callable[[], T],
+        *,
+        prompt_version: str | None = None,
+        record: Callable[[T], str] | None = None,
+        force: bool = False,
+    ) -> Outcome[T]:
+        """Do one unit of work as one job: the protocol, written once.
+
+        Check before spending, claim, do the work, write its output durably, and only
+        then mark it done. A failure is recorded against the job and returned rather
+        than raised, so one bad unit never costs the rest of a batch. `record` turns
+        the work's return value into what is stored; by default it is JSON.
+        """
+        key = idempotency_key(job_type, inputs, prompt_version)
+        cached = self.completed(key)
+        if cached is not None and not force:
+            return Outcome("cached", cached)
+
+        job = self.enqueue(job_type, inputs, prompt_version=prompt_version)
+        if force and job.status == "done":
+            self.reopen(job)
+        claimed = self.claim_by_key(key)
+        if claimed is None:
+            return Outcome("skipped", job, error="too many failed attempts")
+
+        serialise = record or (lambda value: json.dumps(value, default=str))
+        try:
+            value = work()
+            finished = self.finish(claimed, serialise(value))
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            return Outcome("failed", self.fail(claimed, error), error=error)
+        return Outcome("done", finished, value=value)
 
     def reclaim_stale(self, older_than_seconds: int = STALE_AFTER_SECONDS) -> int:
         """Return jobs stranded in 'running' by a session that never came back.

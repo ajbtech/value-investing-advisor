@@ -33,6 +33,9 @@ USER_AGENT = "Mozilla/5.0 (compatible; dossier research tool)"
 MAX_REQUESTS_PER_SECOND = 2
 
 
+PRICES_JOB = "fetch_prices"
+
+
 class PriceSourceError(RuntimeError):
     """The price source refused the request or returned no data."""
 

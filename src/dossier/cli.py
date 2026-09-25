@@ -36,13 +36,20 @@ from dossier.deregistrations import (
     unknown_ciks,
 )
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
-from dossier.extract import EXTRACTOR_VERSION, extract_filing
-from dossier.ingest import INGEST_VERSION, ingest_facts, ingest_filer
-from dossier.jobs import JobQueue, idempotency_key
-from dossier.prices import NoPriceData, YahooPrices, store_prices
+from dossier.extract import EXTRACT_JOB, EXTRACTOR_VERSION, extract_filing
+from dossier.ingest import (
+    BULK_FACTS_JOB,
+    INGEST_JOB,
+    INGEST_VERSION,
+    ingest_facts,
+    ingest_filer,
+)
+from dossier.jobs import JobQueue, Outcome
+from dossier.prices import PRICES_JOB, NoPriceData, YahooPrices, store_prices
 from dossier.recheck import recheck_all, recheck_thesis
 from dossier.screens import (
     CANDIDATE_LIMIT,
+    SCREEN_JOB,
     SCREENER_VERSION,
     build_candidates,
     store_candidates,
@@ -391,43 +398,40 @@ def _client(client: EdgarClient | None) -> EdgarClient:
     return client if client is not None else EdgarClient.from_env()
 
 
+def _result(outcome: Outcome, **identity) -> dict:
+    """The part of every per-unit result that `JobQueue.run` already decided."""
+    return {**identity, "status": outcome.status, "error": outcome.error}
+
+
+def _record_fields(value) -> str:
+    """Store a result dataclass as its fields."""
+    return json.dumps(value.__dict__, default=list)
+
+
 def _ingest_one(queue: JobQueue, conn, edgar: EdgarClient, cik: int, force: bool) -> dict:
     """Ingest one filer as one job. Returns a structured result for either output mode."""
-    inputs = {"cik": cik}
-    key = idempotency_key("ingest_filer", inputs, prompt_version=INGEST_VERSION)
-    result: dict = {"cik": cik, "status": None, "error": None}
 
-    if queue.completed(key) is not None and not force:
-        result["status"] = "cached"
-        return result
+    def work():
+        return ingest_filer(conn, edgar.submissions(cik), edgar.company_facts(cik))
 
-    job = queue.enqueue("ingest_filer", inputs, prompt_version=INGEST_VERSION)
-    if force and job.status == "done":
-        queue.reopen(job)
-    claimed = queue.claim_by_key(key)
-    if claimed is None:
-        result["status"] = "skipped"
-        result["error"] = "too many failed attempts"
-        return result
-
-    try:
-        submissions = edgar.submissions(cik)
-        facts = edgar.company_facts(cik)
-        ingested = ingest_filer(conn, submissions, facts)
-    except Exception as exc:  # one bad filer must not cost the other 499
-        queue.fail(claimed, f"{type(exc).__name__}: {exc}")
-        result["status"] = "failed"
-        result["error"] = f"{type(exc).__name__}: {exc}"
-        return result
-
-    queue.finish(claimed, json.dumps(ingested.__dict__, default=list))
-    result.update(
-        status="ingested",
-        filings=ingested.filings,
-        facts=ingested.facts,
-        facts_inserted=ingested.facts_inserted,
-        stub_filings=ingested.stub_filings,
+    outcome = queue.run(
+        INGEST_JOB,
+        {"cik": cik},
+        work,
+        prompt_version=INGEST_VERSION,
+        record=_record_fields,
+        force=force,
     )
+    result = _result(outcome, cik=cik)
+    if outcome.status == "done":
+        ingested = outcome.value
+        result.update(
+            status="ingested",
+            filings=ingested.filings,
+            facts=ingested.facts,
+            facts_inserted=ingested.facts_inserted,
+            stub_filings=ingested.stub_filings,
+        )
     return result
 
 
@@ -443,35 +447,28 @@ def _describe(result: dict) -> str:
 
 def _ingest_facts_one(queue: JobQueue, conn, zf: zipfile.ZipFile, version: str, cik: int) -> dict:
     """One filer's facts from the bulk ZIP, as one job keyed on the ZIP's version."""
-    inputs = {"cik": cik, "companyfacts": version}
-    key = idempotency_key("ingest_facts_bulk", inputs, prompt_version=INGEST_VERSION)
-    result: dict = {"cik": cik, "status": None, "error": None}
-    if queue.completed(key) is not None:
-        result["status"] = "cached"
-        return result
 
-    queue.enqueue("ingest_facts_bulk", inputs, prompt_version=INGEST_VERSION)
-    claimed = queue.claim_by_key(key)
-    if claimed is None:
-        result.update(status="skipped", error="too many failed attempts")
-        return result
-
-    try:
+    def work():
         doc = read_company_facts(zf, cik)
-        ingested = ingest_facts(conn, cik, doc)
-    except Exception as exc:  # one bad document must not cost the other filers
-        queue.fail(claimed, f"{type(exc).__name__}: {exc}")
-        result.update(status="failed", error=f"{type(exc).__name__}: {exc}")
-        return result
+        return doc is not None, ingest_facts(conn, cik, doc)
 
-    queue.finish(claimed, json.dumps(ingested.__dict__, default=list))
-    # A filer with no entry is one with no XBRL: an answer, like the API's 404.
-    result.update(
-        status="ingested" if doc is not None else "no_facts",
-        facts=ingested.facts,
-        facts_inserted=ingested.facts_inserted,
-        stub_filings=ingested.stub_filings,
+    outcome = queue.run(
+        BULK_FACTS_JOB,
+        {"cik": cik, "companyfacts": version},
+        work,
+        prompt_version=INGEST_VERSION,
+        record=lambda value: _record_fields(value[1]),
     )
+    result = _result(outcome, cik=cik)
+    if outcome.status == "done":
+        found, ingested = outcome.value
+        # A filer with no entry is one with no XBRL: an answer, like the API's 404.
+        result.update(
+            status="ingested" if found else "no_facts",
+            facts=ingested.facts,
+            facts_inserted=ingested.facts_inserted,
+            stub_filings=ingested.stub_filings,
+        )
     return result
 
 
@@ -554,48 +551,38 @@ def _ingest(args, config: Config, client: EdgarClient | None) -> int:
 def _extract_one(queue: JobQueue, conn, edgar: EdgarClient, filing, force: bool) -> dict:
     """Extract one filing as one job. Filings are immutable, so the cache never staless."""
     accession = filing["accession_no"]
-    inputs = {"accession": accession}
-    key = idempotency_key("extract_sections", inputs, prompt_version=EXTRACTOR_VERSION)
-    result: dict = {"accession": accession, "status": None, "error": None}
-
     if not filing["primary_doc_url"]:
         # A stub filing, created during ingest for an accession outside the submissions
         # window. There is no document to fetch and nothing to retry until ingest
         # supplies a URL, so this is reported and skipped rather than failed — a failed
         # job would sit in the resume queue forever, retrying what cannot succeed.
-        result["status"] = "no_document"
-        result["error"] = "filing has no primary_doc_url"
-        return result
+        return {
+            "accession": accession,
+            "status": "no_document",
+            "error": "filing has no primary_doc_url",
+        }
 
-    if queue.completed(key) is not None and not force:
-        result["status"] = "cached"
-        return result
-
-    job = queue.enqueue("extract_sections", inputs, prompt_version=EXTRACTOR_VERSION)
-    if force and job.status == "done":
-        queue.reopen(job)
-    claimed = queue.claim_by_key(key)
-    if claimed is None:
-        result["status"] = "skipped"
-        result["error"] = "too many failed attempts"
-        return result
-
-    try:
+    def work():
         html = edgar.get(filing["primary_doc_url"]).text
-        extracted = extract_filing(conn, accession, html, form_type=filing["form_type"])
-    except Exception as exc:
-        queue.fail(claimed, f"{type(exc).__name__}: {exc}")
-        result["status"] = "failed"
-        result["error"] = f"{type(exc).__name__}: {exc}"
-        return result
+        return extract_filing(conn, accession, html, form_type=filing["form_type"])
 
-    queue.finish(claimed, json.dumps(extracted.__dict__, default=list))
-    result.update(
-        status="extracted",
-        sections=extracted.sections,
-        items=extracted.items,
-        lowest_confidence=extracted.lowest_confidence,
+    outcome = queue.run(
+        EXTRACT_JOB,
+        {"accession": accession},
+        work,
+        prompt_version=EXTRACTOR_VERSION,
+        record=_record_fields,
+        force=force,
     )
+    result = _result(outcome, accession=accession)
+    if outcome.status == "done":
+        extracted = outcome.value
+        result.update(
+            status="extracted",
+            sections=extracted.sections,
+            items=extracted.items,
+            lowest_confidence=extracted.lowest_confidence,
+        )
     return result
 
 
@@ -677,44 +664,37 @@ def _prices_one(
         result["status"] = "no_ticker"
         return result
 
+    def work():
+        try:
+            points = source.daily(ticker, since, through)
+        except NoPriceData as exc:
+            # An answer, not a failure: the source has nothing for this ticker, and a
+            # failed job would sit in the resume queue retrying what cannot succeed.
+            # The key carries the date, so tomorrow's run asks again.
+            return {"days": 0, "inserted": 0, "no_data": f"{type(exc).__name__}: {exc}"}
+        inserted = store_prices(conn, cik, ticker, points)
+        latest = max((p.price_date for p in points), default=None)
+        return {"days": len(points), "inserted": inserted, "latest": latest}
+
     inputs = {
         "cik": cik,
         "ticker": ticker,
         "since": since.isoformat(),
         "through": through.isoformat(),
     }
-    key = idempotency_key("fetch_prices", inputs)
-    if queue.completed(key) is not None:
-        result["status"] = "cached"
-        return result
-
-    queue.enqueue("fetch_prices", inputs)
-    claimed = queue.claim_by_key(key)
-    if claimed is None:
-        result["status"] = "skipped"
-        result["error"] = "too many failed attempts"
-        return result
-
-    try:
-        points = source.daily(ticker, since, through)
-        inserted = store_prices(conn, cik, ticker, points)
-    except NoPriceData as exc:
-        # An answer, not a failure: the source has nothing for this ticker, and a
-        # failed job would sit in the resume queue retrying what cannot succeed. The
-        # key carries the date, so tomorrow's run asks again.
-        queue.finish(claimed, json.dumps({"days": 0, "inserted": 0, "no_data": str(exc)}))
-        result["status"] = "no_data"
-        result["error"] = f"{type(exc).__name__}: {exc}"
-        return result
-    except Exception as exc:  # one bad ticker must not cost the rest
-        queue.fail(claimed, f"{type(exc).__name__}: {exc}")
-        result["status"] = "failed"
-        result["error"] = f"{type(exc).__name__}: {exc}"
-        return result
-
-    latest = max((p.price_date for p in points), default=None)
-    queue.finish(claimed, json.dumps({"days": len(points), "inserted": inserted, "latest": latest}))
-    result.update(status="fetched", days=len(points), days_inserted=inserted, latest=latest)
+    outcome = queue.run(PRICES_JOB, inputs, work)
+    result.update(status=outcome.status, error=outcome.error)
+    if outcome.status == "done":
+        fetched = outcome.value
+        if "no_data" in fetched:
+            result.update(status="no_data", error=fetched["no_data"])
+        else:
+            result.update(
+                status="fetched",
+                days=fetched["days"],
+                days_inserted=fetched["inserted"],
+                latest=fetched["latest"],
+            )
     return result
 
 
@@ -783,27 +763,22 @@ def _screen(args, config: Config) -> int:
             "compare": list(compare),
             "fingerprint": AsOfView(conn, as_of).fingerprint(),
         }
-        key = idempotency_key("screen", inputs, prompt_version=SCREENER_VERSION)
-        cached = queue.completed(key)
-        if cached is not None:
-            run = json.loads(cached.read_output())
+
+        def work():
+            built = build_candidates(conn, as_of, limit=args.limit, compare_months=compare)
+            store_candidates(conn, built)
+            return built
+
+        outcome = queue.run(SCREEN_JOB, inputs, work, prompt_version=SCREENER_VERSION)
+        if outcome.status in ("failed", "skipped"):
+            print(f"dossier screen: {outcome.error}", file=sys.stderr)
+            return 1
+        if outcome.status == "cached":
+            run = json.loads(outcome.job.read_output())
             store_candidates(conn, run)
             status = "cached"
         else:
-            queue.enqueue("screen", inputs, prompt_version=SCREENER_VERSION)
-            claimed = queue.claim_by_key(key)
-            if claimed is None:
-                print("dossier screen: this run has failed too many times", file=sys.stderr)
-                return 1
-            try:
-                run = build_candidates(conn, as_of, limit=args.limit, compare_months=compare)
-                store_candidates(conn, run)
-            except Exception as exc:
-                queue.fail(claimed, f"{type(exc).__name__}: {exc}")
-                print(f"dossier screen: {type(exc).__name__}: {exc}", file=sys.stderr)
-                return 1
-            queue.finish(claimed, json.dumps(run, default=str))
-            status = "screened"
+            run, status = outcome.value, "screened"
 
     if args.out:
         Path(args.out).write_text(
@@ -1287,11 +1262,11 @@ def _resume(
             _say(args.as_json, "Nothing to resume.")
         try:
             for job in pending:
-                if job.job_type == "ingest_filer":
+                if job.job_type == INGEST_JOB:
                     client = _client(client)
                     result = _ingest_one(queue, conn, client, job.inputs["cik"], force=False)
                     _say(args.as_json, _describe(result))
-                elif job.job_type == "fetch_prices":
+                elif job.job_type == PRICES_JOB:
                     if source is None:
                         source = owned = YahooPrices()
                     # The job's own dates, so the retry claims this row rather than

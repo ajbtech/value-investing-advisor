@@ -110,6 +110,11 @@ def tags_version(tags) -> str:
 
 INGEST_VERSION = tags_version(SCREEN_TAGS)
 
+#: Job types, named once. `resume` dispatches on these, and a mistyped one would leave
+#: failed jobs that nothing ever retries.
+INGEST_JOB = "ingest_filer"
+BULK_FACTS_JOB = "ingest_facts_bulk"
+
 
 @dataclass(frozen=True)
 class FilerRecord:
