@@ -5,6 +5,11 @@ on:
     branches: ["**"]
   pull_request:
 
+# CI only reads the code. The repository is public, so the token gets no write access
+# that a compromised action could use.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -30,8 +35,10 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      # --locked: a uv.lock out of step with pyproject.toml fails here, rather than being
+      # silently re-resolved into versions nobody chose.
       - name: Install the project
-        run: uv sync --extra dev --python ${{ matrix.python-version }}
+        run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
 
       - name: Lint
         run: uv run ruff check .
