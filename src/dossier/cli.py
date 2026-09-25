@@ -29,14 +29,10 @@ from dossier.analysis import (
 from dossier.asof import AsOfView, fact_count
 from dossier.bulk import COMPANYFACTS_URL, companyfacts_version, read_company_facts
 from dossier.config import Config
-from dossier.deregistrations import (
-    Deregistration,
-    mark_terminal_status,
-    parse_form_index,
-    unknown_ciks,
-)
+from dossier.deregistrations import mark_terminal_status, parse_form_index, unknown_ciks
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
 from dossier.extract import EXTRACT_JOB, EXTRACTOR_VERSION, extract_filing, filings_to_extract
+from dossier.formindex import read_quarters
 from dossier.ingest import (
     BULK_FACTS_JOB,
     INGEST_JOB,
@@ -72,7 +68,7 @@ from dossier.thesis import (
     prepare_thesis,
     record_pass_over,
 )
-from dossier.universe import AnnualFiler, parse_annual_filers, unheld
+from dossier.universe import parse_annual_filers, unheld
 from dossier.valuation import load_valuation, prepare_valuation
 
 #: How far back `dossier prices` fetches by default: enough for the screens to run as of
@@ -810,20 +806,13 @@ def _deregistrations(args, config: Config, client: EdgarClient | None) -> int:
         return 2
 
     edgar = _client(client)
-    found: list[Deregistration] = []
-    quarters = []
-    for year in range(args.from_year, to_year + 1):
-        for quarter in (1, 2, 3, 4):
-            try:
-                text = edgar.form_index(year, quarter)
-            except Exception as exc:
-                # A quarter that has not happened yet, or a gap in the archive. Neither
-                # is a reason to lose the quarters that did parse.
-                quarters.append({"year": year, "quarter": quarter, "error": str(exc)[:120]})
-                continue
-            parsed = parse_form_index(text)
-            found.extend(parsed)
-            quarters.append({"year": year, "quarter": quarter, "terminal_filings": len(parsed)})
+    found, quarters = read_quarters(
+        edgar.form_index,
+        args.from_year,
+        to_year,
+        parse=parse_form_index,
+        label="terminal_filings",
+    )
 
     with open_store(config.store_path) as conn:
         marked = mark_terminal_status(conn, found)
@@ -871,20 +860,13 @@ def _universe(args, config: Config, client: EdgarClient | None) -> int:
         return 2
 
     edgar = _client(client)
-    found: list[AnnualFiler] = []
-    quarters = []
-    for year in range(args.from_year, to_year + 1):
-        for quarter in (1, 2, 3, 4):
-            try:
-                text = edgar.form_index(year, quarter)
-            except Exception as exc:
-                # A quarter that has not happened yet, or a gap in the archive. Neither
-                # is a reason to lose the quarters that did parse.
-                quarters.append({"year": year, "quarter": quarter, "error": str(exc)[:120]})
-                continue
-            parsed = parse_annual_filers(text)
-            found.extend(parsed)
-            quarters.append({"year": year, "quarter": quarter, "annual_filers": len(parsed)})
+    found, quarters = read_quarters(
+        edgar.form_index,
+        args.from_year,
+        to_year,
+        parse=parse_annual_filers,
+        label="annual_filers",
+    )
 
     with open_store(config.store_path) as conn:
         missing = unheld(conn, found)
