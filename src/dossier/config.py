@@ -41,6 +41,12 @@ class Config:
         return self.data_dir / "edgar.sqlite"
 
     @property
+    def bulk_dir(self) -> Path:
+        """EDGAR's bulk ZIPs, kept so that widening the tag set re-reads a file on disk
+        rather than re-fetching every filer from the SEC."""
+        return self.data_dir / "bulk"
+
+    @property
     def output_dir(self) -> Path:
         """Job output. The LLM analysis cache lands here, and is worth backing up —
         it is the only artifact in the system that costs money to recreate."""

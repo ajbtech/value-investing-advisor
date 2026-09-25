@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from dossier.analysis import (
     prompt_version_for,
 )
 from dossier.asof import AsOfView, fact_count
+from dossier.bulk import COMPANYFACTS_URL, companyfacts_version, read_company_facts
 from dossier.config import Config
 from dossier.deregistrations import (
     Deregistration,
@@ -35,7 +37,7 @@ from dossier.deregistrations import (
 )
 from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
 from dossier.extract import EXTRACTOR_VERSION, extract_filing
-from dossier.ingest import INGEST_VERSION, ingest_filer
+from dossier.ingest import INGEST_VERSION, ingest_facts, ingest_filer
 from dossier.jobs import JobQueue, idempotency_key
 from dossier.prices import NoPriceData, YahooPrices, store_prices
 from dossier.recheck import recheck_all, recheck_thesis
@@ -100,6 +102,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest.add_argument(
         "--force", action="store_true", help="re-run even for filers already ingested"
+    )
+    ingest.add_argument(
+        "--bulk",
+        action="store_true",
+        help="read facts for filers already in the store from EDGAR's nightly "
+        "companyfacts.zip, downloaded once and kept on disk; --cik narrows it",
+    )
+    ingest.add_argument(
+        "--refresh",
+        action="store_true",
+        help="with --bulk, download a fresh companyfacts.zip even if one is on disk",
     )
 
     extract = subcommands.add_parser(
@@ -428,7 +441,82 @@ def _describe(result: dict) -> str:
     return f"  {result['cik']}: {result['status']} — {result['error']}"
 
 
+def _ingest_facts_one(queue: JobQueue, conn, zf: zipfile.ZipFile, version: str, cik: int) -> dict:
+    """One filer's facts from the bulk ZIP, as one job keyed on the ZIP's version."""
+    inputs = {"cik": cik, "companyfacts": version}
+    key = idempotency_key("ingest_facts_bulk", inputs, prompt_version=INGEST_VERSION)
+    result: dict = {"cik": cik, "status": None, "error": None}
+    if queue.completed(key) is not None:
+        result["status"] = "cached"
+        return result
+
+    queue.enqueue("ingest_facts_bulk", inputs, prompt_version=INGEST_VERSION)
+    claimed = queue.claim_by_key(key)
+    if claimed is None:
+        result.update(status="skipped", error="too many failed attempts")
+        return result
+
+    try:
+        doc = read_company_facts(zf, cik)
+        ingested = ingest_facts(conn, cik, doc)
+    except Exception as exc:  # one bad document must not cost the other filers
+        queue.fail(claimed, f"{type(exc).__name__}: {exc}")
+        result.update(status="failed", error=f"{type(exc).__name__}: {exc}")
+        return result
+
+    queue.finish(claimed, json.dumps(ingested.__dict__, default=list))
+    # A filer with no entry is one with no XBRL: an answer, like the API's 404.
+    result.update(
+        status="ingested" if doc is not None else "no_facts",
+        facts=ingested.facts,
+        facts_inserted=ingested.facts_inserted,
+        stub_filings=ingested.stub_filings,
+    )
+    return result
+
+
+def _ingest_bulk(args, config: Config, client: EdgarClient | None) -> int:
+    """Facts for filers already in the store, from the nightly companyfacts.zip.
+
+    The ZIP is downloaded only when it is missing or --refresh asks for a new one, so
+    widening the tag set afterwards costs a local re-parse and no requests at all.
+    """
+    path = config.bulk_dir / "companyfacts.zip"
+    if args.refresh or not path.exists():
+        _say(args.as_json, f"Downloading {COMPANYFACTS_URL}")
+        _client(client).download(COMPANYFACTS_URL, path)
+    version = companyfacts_version(path)
+
+    results = []
+    with open_store(config.store_path) as conn, zipfile.ZipFile(path) as zf:
+        ciks = list(args.cik) or [
+            row[0] for row in conn.execute("SELECT cik FROM filer ORDER BY cik")
+        ]
+        _say(args.as_json, f"Reading facts for {len(ciks)} filer(s) from the {version} ZIP")
+        queue = JobQueue(conn, output_dir=config.output_dir)
+        for cik in ciks:
+            result = _ingest_facts_one(queue, conn, zf, version, cik)
+            results.append(result)
+            _say(args.as_json, f"  {cik}: {result['status']}")
+
+    failures = sum(1 for r in results if r["status"] in ("failed", "skipped"))
+    if args.as_json:
+        _emit(
+            {
+                "command": "ingest",
+                "bulk": str(path),
+                "companyfacts": version,
+                "requested": len(results),
+                "failures": failures,
+                "results": results,
+            }
+        )
+    return 1 if failures else 0
+
+
 def _ingest(args, config: Config, client: EdgarClient | None) -> int:
+    if args.bulk:
+        return _ingest_bulk(args, config, client)
     edgar = _client(client)
     ciks = list(args.cik)
     if args.limit is not None:

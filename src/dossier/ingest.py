@@ -341,10 +341,71 @@ def ingest_filer(
     result = IngestResult(cik=filer.cik, filings=len(filings), facts=len(facts))
 
     known = {filing.accession_no for filing in filings}
-    # companyfacts reaches further back than the `recent` submissions window, so some
-    # facts cite filings we have no row for. Stub those in rather than dropping the
-    # facts, which keeps the foreign key honest and the history complete.
-    stubs = {}
+    stubs = _stub_filings(facts, known)
+    result.stub_filings = len(stubs)
+
+    # Stub filings reach back further than the submissions window, so the earliest
+    # filing we know of may come from a fact rather than from `filings.recent`.
+    earliest = min(
+        (f.filed_date for f in [*filings, *stubs] if f.filed_date),
+        default=filer.first_filing_date,
+    )
+    filer = replace(filer, first_filing_date=earliest)
+
+    with conn:
+        _upsert_filer(conn, filer)
+        for filing in [*filings, *stubs]:
+            if _insert_filing(conn, filing):
+                result.filings_inserted += 1
+        result.facts_inserted = _insert_facts(conn, facts)
+    return result
+
+
+def ingest_facts(
+    conn: sqlite3.Connection,
+    cik: int,
+    company_facts: dict | None,
+    tags: set[str] | frozenset[str] = SCREEN_TAGS,
+) -> IngestResult:
+    """Write one filer's facts from a `companyfacts` document, and nothing else.
+
+    For the bulk ZIP, which carries facts for every filer on EDGAR but no filing index.
+    The filer must already be in the store: deciding who is in the universe is the form
+    index's job, and a facts file that could add filers would quietly take it over.
+    """
+    if conn.execute("SELECT 1 FROM filer WHERE cik = ?", (cik,)).fetchone() is None:
+        raise ValueError(f"CIK {cik} is not in the store; ingest the filer before its facts")
+    facts = parse_company_facts(company_facts, tags, cik=cik) if company_facts else []
+    result = IngestResult(cik=cik, facts=len(facts))
+
+    known = {
+        row[0] for row in conn.execute("SELECT accession_no FROM filing WHERE cik = ?", (cik,))
+    }
+    stubs = _stub_filings(facts, known)
+    result.stub_filings = len(stubs)
+
+    with conn:
+        for filing in stubs:
+            if _insert_filing(conn, filing):
+                result.filings_inserted += 1
+        result.facts_inserted = _insert_facts(conn, facts)
+        earliest = min((f.filed_date for f in facts), default=None)
+        if earliest is not None:
+            conn.execute(
+                "UPDATE filer SET first_seen = MIN(COALESCE(first_seen, ?), ?) WHERE cik = ?",
+                (earliest, earliest, cik),
+            )
+    return result
+
+
+def _stub_filings(facts: list[FactRecord], known: set[str]) -> list[FilingRecord]:
+    """A filing row for every accession a fact cites that the store has no row for.
+
+    companyfacts reaches further back than the `recent` submissions window, so some
+    facts cite filings we have no row for. Stub those in rather than dropping the facts,
+    which keeps the foreign key honest and the history complete.
+    """
+    stubs: dict[str, FilingRecord] = {}
     for fact in facts:
         if fact.accession_no not in known and fact.accession_no not in stubs:
             stubs[fact.accession_no] = FilingRecord(
@@ -353,45 +414,34 @@ def ingest_filer(
                 form_type=fact.form_type or "UNKNOWN",
                 filed_date=fact.filed_date,
             )
-    result.stub_filings = len(stubs)
+    return list(stubs.values())
 
-    # Stub filings reach back further than the submissions window, so the earliest
-    # filing we know of may come from a fact rather than from `filings.recent`.
-    earliest = min(
-        (f.filed_date for f in [*filings, *stubs.values()] if f.filed_date),
-        default=filer.first_filing_date,
+
+def _insert_facts(conn: sqlite3.Connection, facts: list[FactRecord]) -> int:
+    """Insert facts, never updating one. Returns how many were new."""
+    before = conn.total_changes
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO fact
+            (accession_no, cik, tag, unit, period_start, period_end, value,
+             fiscal_year, fiscal_period, form_type, filed_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                fact.accession_no,
+                fact.cik,
+                fact.tag,
+                fact.unit,
+                fact.period_start,
+                fact.period_end,
+                fact.value,
+                fact.fiscal_year,
+                fact.fiscal_period,
+                fact.form_type,
+                fact.filed_date,
+            )
+            for fact in facts
+        ],
     )
-    filer = replace(filer, first_filing_date=earliest)
-
-    with conn:
-        _upsert_filer(conn, filer)
-        for filing in [*filings, *stubs.values()]:
-            if _insert_filing(conn, filing):
-                result.filings_inserted += 1
-        before = conn.total_changes
-        conn.executemany(
-            """
-            INSERT OR IGNORE INTO fact
-                (accession_no, cik, tag, unit, period_start, period_end, value,
-                 fiscal_year, fiscal_period, form_type, filed_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    fact.accession_no,
-                    fact.cik,
-                    fact.tag,
-                    fact.unit,
-                    fact.period_start,
-                    fact.period_end,
-                    fact.value,
-                    fact.fiscal_year,
-                    fact.fiscal_period,
-                    fact.form_type,
-                    fact.filed_date,
-                )
-                for fact in facts
-            ],
-        )
-        result.facts_inserted = conn.total_changes - before
-    return result
+    return conn.total_changes - before
