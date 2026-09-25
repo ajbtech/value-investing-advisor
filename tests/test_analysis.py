@@ -18,8 +18,8 @@ from dossier.analysis import (
     AnalysisInput,
     load_findings,
     prepare_pass_a,
-    prompt_text,
 )
+from dossier.prompt_files import prompt_text
 from dossier.store import open_store
 
 CURRENT = "0000320193-24-000123"

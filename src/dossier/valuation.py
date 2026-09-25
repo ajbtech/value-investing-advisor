@@ -21,8 +21,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
-from dossier.analysis import prompt_text
 from dossier.figures import annual_rows, maintenance_capex, prepare_figures
+from dossier.prompt_files import prompt_text
 
 #: One number, set once, applied to every filer. Letting it vary per company is how a
 #: DCF becomes a machine for justifying whatever you already wanted to buy.

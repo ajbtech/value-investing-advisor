@@ -25,7 +25,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from dossier.figures import annual_rows, maintenance_capex, prepare_figures
-from dossier.thesis import _append_journal, stored_thesis
+from dossier.journal import append_entry
+from dossier.thesis import stored_thesis
 
 RECHECK_VERSION = "1"
 
@@ -264,7 +265,7 @@ def recheck_thesis(
             ),
         )
 
-    _append_journal(
+    append_entry(
         journal_dir,
         {"kind": "recheck", **report},
         f"{cik}-{as_of}-recheck-{run_date}",

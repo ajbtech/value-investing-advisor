@@ -178,7 +178,7 @@ class TestLoad:
     def test_the_prompt_warns_that_notes_are_renumbered(self, store):
         """Found live: Kodak's Note 13 is Guarantees this year and was Financial
         Instruments last year. Comparing by number compares two unrelated disclosures."""
-        from dossier.analysis import prompt_text
+        from dossier.prompt_files import prompt_text
 
         assert "by heading" in prompt_text(prompt_version_for("8", pass_name="b"))
 

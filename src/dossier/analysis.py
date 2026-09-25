@@ -17,12 +17,10 @@ import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 
 from dossier.findings import Finding, fabrication_rate, validate_findings
 from dossier.jobs import idempotency_key
-
-PROMPTS_DIR = Path(__file__).parent / "prompts"
+from dossier.prompt_files import prompt_text
 
 #: Pinned so a result can be traced to the words that produced it. When output shifts,
 #: you need to know whether the world changed or the prompt did.
@@ -59,16 +57,6 @@ PASS_PROMPTS = {"a": PASS_A_PROMPTS, "b": PASS_B_PROMPTS, "d": PASS_D_PROMPTS}
 #: produces confident findings about text the filing does not contain — the pass should
 #: refuse rather than launder a broken extraction into a dossier.
 MIN_SECTION_CONFIDENCE = 0.6
-
-
-def prompt_text(version: str) -> str:
-    path = PROMPTS_DIR / f"{version}.md"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"no prompt {version!r} in {PROMPTS_DIR}. Prompt versions are pinned in the "
-            "repository; add the file rather than inlining the text."
-        )
-    return path.read_text(encoding="utf-8")
 
 
 def prompt_version_for(item: str, pass_name: str = "a") -> str:

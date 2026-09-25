@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from dossier.analysis import prompt_text
+from dossier.prompt_files import prompt_text
 from dossier.recheck import CHECKABLE_METRICS, recheck_all, recheck_thesis
 from dossier.store import open_store
 from dossier.thesis import THESIS_PROMPT, load_thesis
