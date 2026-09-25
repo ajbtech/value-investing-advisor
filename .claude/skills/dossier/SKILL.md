@@ -103,9 +103,15 @@ no-op to apologise for — it means the work was already done and correctly skip
   `document_section` row before using that section for anything.
 
 `prices` returns one result per filer with a `status` of `fetched`, `cached` (already
-fetched today), `no_ticker`, `not_ingested` or `failed`. Prices come from Yahoo's
-keyless chart endpoint, which is unofficial: a `failed` result naming "delisted" or
-"No data found" usually means the ticker no longer trades there.
+fetched today), `no_ticker`, `no_data`, `not_ingested` or `failed`. Prices come from
+Yahoo's keyless chart endpoint, which is unofficial. `no_data` is Yahoo saying "No data
+found, symbol may be delisted": an answer rather than a failure, so it is recorded and
+never enters the resume queue — and it is asked again on a later day. `failed` is
+anything else, usually the network, and `dossier resume` retries it.
+
+`resume` retries failed ingest and price jobs. A job type it has no handler for is
+reported as `unhandled` and counts as a failure, so exit code 0 means everything
+resumable was actually run.
 
 `screen` returns the whole run:
 

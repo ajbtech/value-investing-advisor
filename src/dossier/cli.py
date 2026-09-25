@@ -37,7 +37,7 @@ from dossier.edgar import EdgarClient, InvalidUserAgent, SecBlocked
 from dossier.extract import EXTRACTOR_VERSION, extract_filing
 from dossier.ingest import INGEST_VERSION, ingest_filer
 from dossier.jobs import JobQueue, idempotency_key
-from dossier.prices import YahooPrices, store_prices
+from dossier.prices import NoPriceData, YahooPrices, store_prices
 from dossier.recheck import recheck_all, recheck_thesis
 from dossier.screens import (
     CANDIDATE_LIMIT,
@@ -352,7 +352,7 @@ def main(
         if args.command == "status":
             return _status(args, config)
         if args.command == "resume":
-            return _resume(args, config, client)
+            return _resume(args, config, client, prices)
     except InvalidUserAgent as exc:
         # The most likely first-run failure in the whole tool. It should read as an
         # instruction, not as a stack trace — and never on stdout, which may be a pipe.
@@ -610,6 +610,14 @@ def _prices_one(
     try:
         points = source.daily(ticker, since, through)
         inserted = store_prices(conn, cik, ticker, points)
+    except NoPriceData as exc:
+        # An answer, not a failure: the source has nothing for this ticker, and a
+        # failed job would sit in the resume queue retrying what cannot succeed. The
+        # key carries the date, so tomorrow's run asks again.
+        queue.finish(claimed, json.dumps({"days": 0, "inserted": 0, "no_data": str(exc)}))
+        result["status"] = "no_data"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
     except Exception as exc:  # one bad ticker must not cost the rest
         queue.fail(claimed, f"{type(exc).__name__}: {exc}")
         result["status"] = "failed"
@@ -1175,35 +1183,56 @@ def _status(args, config: Config) -> int:
     return 0
 
 
-def _resume(args, config: Config, client: EdgarClient | None) -> int:
+def _resume(
+    args, config: Config, client: EdgarClient | None, source: YahooPrices | None = None
+) -> int:
     results = []
+    owned = None
     with open_store(config.store_path) as conn:
         queue = JobQueue(conn, output_dir=config.output_dir)
         queue.reclaim_stale()
         pending = queue.resumable()
 
         if pending:
-            edgar = _client(client)
             _say(args.as_json, f"Resuming {len(pending)} job(s)")
-            for job in pending:
-                if job.job_type != "ingest_filer":
-                    results.append(
-                        {
-                            "job_id": job.job_id,
-                            "job_type": job.job_type,
-                            "status": "unhandled",
-                            "error": f"no handler for {job.job_type}",
-                        }
-                    )
-                    _say(args.as_json, f"  {job.job_id}: no handler for {job.job_type}, leaving it")
-                    continue
-                result = _ingest_one(queue, conn, edgar, job.inputs["cik"], force=False)
-                results.append(result)
-                _say(args.as_json, _describe(result))
         else:
             _say(args.as_json, "Nothing to resume.")
+        try:
+            for job in pending:
+                if job.job_type == "ingest_filer":
+                    client = _client(client)
+                    result = _ingest_one(queue, conn, client, job.inputs["cik"], force=False)
+                    _say(args.as_json, _describe(result))
+                elif job.job_type == "fetch_prices":
+                    if source is None:
+                        source = owned = YahooPrices()
+                    # The job's own dates, so the retry claims this row rather than
+                    # enqueueing a new one under today's key.
+                    result = _prices_one(
+                        queue,
+                        conn,
+                        source,
+                        job.inputs["cik"],
+                        date.fromisoformat(job.inputs["since"]),
+                        date.fromisoformat(job.inputs["through"]),
+                    )
+                    _say(args.as_json, f"  {result['cik']}: {result['status']}")
+                else:
+                    result = {
+                        "job_id": job.job_id,
+                        "job_type": job.job_type,
+                        "status": "unhandled",
+                        "error": f"no handler for {job.job_type}",
+                    }
+                    _say(args.as_json, f"  {job.job_id}: no handler for {job.job_type}")
+                results.append(result)
+        finally:
+            if owned is not None:
+                owned.close()
 
-    failures = sum(1 for r in results if r["status"] in ("failed", "skipped"))
+    # A job left untouched is not a success. Counting it here is what stops a scheduled
+    # resume that nobody reads from reporting that all is well.
+    failures = sum(1 for r in results if r["status"] in ("failed", "skipped", "unhandled"))
     if args.as_json:
         _emit(
             {

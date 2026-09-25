@@ -90,22 +90,45 @@ class TestPricesCommand:
         result = json.loads(capsys.readouterr().out)["results"][0]
         assert result["status"] == "not_ingested"
 
-    def test_a_source_error_fails_that_filer_only(self, data_dir, edgar, yahoo, capsys):
+    def test_a_source_error_fails_that_filer_only(self, data_dir, edgar, capsys):
+        from dossier.prices import YahooPrices
+
+        def refused(request):
+            return httpx.Response(503, json={"chart": {"result": None, "error": None}})
+
+        down = YahooPrices(transport=httpx.MockTransport(refused), sleep=lambda _: None)
         main(["ingest", "--cik", "320193"], client=edgar)
-        with open_store(data_dir / "edgar.sqlite") as conn:
-            conn.execute("UPDATE filer SET ticker = 'GONE' WHERE cik = 320193")
-            conn.commit()
         capsys.readouterr()
-        assert main(["prices", "--cik", "320193", "--json"], prices=yahoo) == 1
+        assert main(["prices", "--cik", "320193", "--json"], prices=down) == 1
         result = json.loads(capsys.readouterr().out)["results"][0]
         assert result["status"] == "failed"
-        assert "No data found" in result["error"]
+        assert "HTTP 503" in result["error"]
 
     def test_json_output_is_only_json(self, data_dir, edgar, yahoo, capsys):
         main(["ingest", "--cik", "320193"], client=edgar)
         capsys.readouterr()
         main(["prices", "--cik", "320193", "--json"], prices=yahoo)
         json.loads(capsys.readouterr().out)
+
+    def test_a_ticker_with_no_data_is_an_answer_not_a_failure(self, data_dir, edgar, yahoo, capsys):
+        """43 of 5,922 live tickers came back "No data found, symbol may be delisted".
+        Retrying cannot change that today, so a failed job would sit in the resume queue
+        forever. The same lesson as a companyfacts 404: record the answer."""
+        main(["ingest", "--cik", "320193"], client=edgar)
+        with open_store(data_dir / "edgar.sqlite") as conn:
+            conn.execute("UPDATE filer SET ticker = 'GONE' WHERE cik = 320193")
+            conn.commit()
+        capsys.readouterr()
+
+        assert main(["prices", "--cik", "320193", "--json"], prices=yahoo) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["failures"] == 0
+        result = payload["results"][0]
+        assert result["status"] == "no_data"
+        assert "No data found" in result["error"]
+
+        main(["status", "--json"])
+        assert json.loads(capsys.readouterr().out)["resumable"] == 0
 
 
 class TestHelp:
@@ -492,3 +515,37 @@ class TestResumeCommand:
     def test_says_so_when_there_is_nothing_to_resume(self, data_dir, capsys):
         assert main(["resume"]) == 0
         assert "nothing" in capsys.readouterr().out.lower()
+
+    def test_retries_a_price_fetch_that_failed_on_the_network(self, data_dir, edgar, yahoo, capsys):
+        """Found live: a machine going into standby mid-run cost five fetches to DNS
+        errors, and `resume` listed them as "no handler" while reporting no failures."""
+        from dossier.prices import YahooPrices
+
+        def unreachable(request):
+            raise httpx.ConnectError("getaddrinfo failed")
+
+        offline = YahooPrices(transport=httpx.MockTransport(unreachable), sleep=lambda _: None)
+        main(["ingest", "--cik", "320193"], client=edgar)
+        main(["prices", "--cik", "320193"], prices=offline)
+        capsys.readouterr()
+
+        assert main(["resume", "--json"], client=edgar, prices=yahoo) == 0
+        results = json.loads(capsys.readouterr().out)["results"]
+        assert [r["status"] for r in results] == ["fetched"]
+        with open_store(data_dir / "edgar.sqlite") as conn:
+            assert conn.execute("SELECT COUNT(*) FROM price").fetchone()[0] == 10
+
+    def test_a_job_it_cannot_run_is_a_failure_not_a_silent_skip(self, data_dir, capsys):
+        """Reporting zero failures after leaving jobs untouched is the silence this
+        design exists to prevent: a scheduled run nobody reads would say all is well."""
+        from dossier.jobs import JobQueue
+
+        with open_store(data_dir / "edgar.sqlite") as conn:
+            queue = JobQueue(conn, output_dir=data_dir / "jobs")
+            job = queue.enqueue("mystery_work", {"x": 1})
+            queue.fail(queue.claim_by_key(job.idempotency_key), "boom")
+
+        assert main(["resume", "--json"]) == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["failures"] == 1
+        assert payload["results"][0]["status"] == "unhandled"
