@@ -37,6 +37,20 @@ class PriceSourceError(RuntimeError):
     """The price source refused the request or returned no data."""
 
 
+class NoPriceData(PriceSourceError):
+    """The source answered, and its answer is that it has nothing for this ticker.
+
+    Usually a ticker that no longer trades. Retrying today cannot change it, so it is an
+    answer to record rather than a failure to retry.
+    """
+
+
+def _source_error(text: str) -> PriceSourceError:
+    if "no data found" in text.lower():
+        return NoPriceData(text)
+    return PriceSourceError(text)
+
+
 @dataclass(frozen=True)
 class PricePoint:
     price_date: str
@@ -59,7 +73,7 @@ def parse_chart(payload: dict) -> list[PricePoint]:
     """Turn a chart response into closes as traded, split adjustment removed."""
     error = _error_text(payload)
     if error:
-        raise PriceSourceError(error)
+        raise _source_error(error)
     results = (payload.get("chart") or {}).get("result") or []
     if not results:
         raise PriceSourceError("price source returned no result")
@@ -135,7 +149,7 @@ class YahooPrices:
         except ValueError:
             payload = {}
         if response.status_code != 200:
-            raise PriceSourceError(
+            raise _source_error(
                 _error_text(payload) or f"price source returned HTTP {response.status_code}"
             )
         return parse_chart(payload)
