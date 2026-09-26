@@ -222,6 +222,10 @@ found there as Item 8, with `heading` set to the notes heading and confidence 0.
 the index is a single unnumbered note, the notes were not found: say so rather than
 reporting a filing with no footnotes.
 
+**Load a pass's findings as one file.** A load replaces that company's earlier findings
+for the pass, so re-loading one corrected finding on its own wipes the rest. Fix the
+quote in the full file and load all of them again.
+
 **Match notes by heading, never by number.** Numbering shifts year to year — in Kodak's
 2025 filing Note 13 is Guarantees, in 2024 it was Financial Instruments.
 

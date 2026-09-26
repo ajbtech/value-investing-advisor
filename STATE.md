@@ -920,6 +920,62 @@ principal is still not subtracted (the model values cash flow after interest), w
 matters for indebted filers. The theses were written on Pass A alone; Passes B
 (footnotes) and D (proxy) are the next step for the three.
 
+### Footnotes and proxies for the three, and the theses revised — 2026-09-26
+
+**Pass B could not run on two of the three, and neither failure was visible.** Deckers
+and Genpact answer Item 8 with one sentence pointing past Part IV and file the
+statements after the signatures, so Item 8 was stored as that sentence. Sprouts numbers
+its notes "1. Organization" rather than "NOTE 1", so the splitter found no notes in
+106,639 characters. Extractor v4 replaces an Item 8 under 2,000 characters with the
+notes found after it (the first notes heading with a Note 1 directly beneath, which the
+index entry never has), and `split_notes` accepts bare numbering in sequence, folds
+"(Continued)" pages into their note, treats a "1." inside a note as a list, and ignores
+"Note 9, ..." cross-references. On the real filings: Deckers 14 notes, Genpact 27,
+Sprouts 24.
+
+**Pass B: 18 findings, 6 each; 1 of 18 quotes dropped on first submission** (fragments
+cited out of document order), re-quoted and verified. **Pass D: 9 findings, 3 each, none
+dropped.** The ones that moved the argument:
+
+- Deckers: fiscal 2026 cash taxes fell to $234.3M from $345.4M on accelerated
+  deductions, a timing benefit of about 2% of revenue inside operating cash flow; the
+  board set the fiscal 2026 operating-income target at $1,066.21M, below the fiscal
+  2025 maximum of $1,127.8M that was achieved.
+- Genpact: deferred billings up 79% while the method for reserving against them
+  changed; receivables allowance up 83%; cloud-implementation cash flows were
+  "incorrectly classified" in investing through mid-2025 and not restated.
+- Sprouts: $1,175.9M of leases signed but not commenced (up 55%); $60.2M of purchased
+  tax credits still accrued, a 2025 cash timing benefit; the proxy says comparable
+  sales became a PSU metric while the award terms describe Plan EBIT alone.
+
+The valuations were re-anchored to these findings. Deckers and Genpact kept their
+margins with new justifications (the base cases already sat at the cleaned-up level);
+Sprouts' base and bull margins came down to 4.5% and 5.3%. Theses were revised to
+version 2 and attacked again:
+
+| | Price | Bear / base / bull | Price implies | Bear pass v2 |
+| --- | --- | --- | --- | --- |
+| Deckers | $78.59 | $75 / $122 / $169 | revenue 0.0% a year | 6 kept, 0 dropped |
+| Genpact | $33.24 | $23 / $44 / $65 | revenue -0.8% a year | 6 kept, 0 dropped |
+| Sprouts | $66.38 | $43 / $81 / $118 | revenue +4.3% a year | 6 kept, 0 dropped |
+
+**A bug the revision exposed:** `recheck` still measured owner earnings before stock
+compensation, so each thesis was checked against a more generous margin than it was
+written on. Recheck v2 uses the valuation's definition; all nine machine-checkable
+conditions hold, and the three that need reading are flagged as such.
+
+**Known gaps found on the way, not yet fixed:**
+
+- `normalise` drops any line that is only a one- to four-digit number, meant for page
+  numbers, and so removes small table cells: Deckers' asset-retirement roll-forward
+  reads "Accretion expenses 1,122 Foreign currency translation gains Ending balance".
+  Quotes stay honest, since they are checked against the same text, but a table read
+  from a stored section can be missing cells.
+- Loading a pass's findings replaces that company's earlier findings for the pass. A
+  one-finding correction therefore wiped the other five until all six were loaded
+  together. Correct for idempotency, easy to trip over: load a pass's findings as one
+  file.
+
 ## Branch protection — applied 2026-09-25
 
 Two repository rulesets existed from 2026-09-21 but targeted `refs/heads/Standard`, a
