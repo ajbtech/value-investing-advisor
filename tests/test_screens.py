@@ -494,9 +494,10 @@ class TestUniverse:
 
 #: Three consecutive fiscal years in which every one of the nine tests passes in 2024.
 IMPROVING = {
-    2022: {"Assets": 1000.0, "NetIncomeLoss": 40.0},
+    2022: {"Assets": 1000.0, "NetIncomeLoss": 40.0, "OperatingIncomeLoss": 60.0},
     2023: {
         "NetIncomeLoss": 50.0,
+        "OperatingIncomeLoss": 70.0,
         "Assets": 1000.0,
         "NetCashProvidedByUsedInOperatingActivities": 60.0,
         "LongTermDebtNoncurrent": 300.0,
@@ -508,6 +509,7 @@ IMPROVING = {
     },
     2024: {
         "NetIncomeLoss": 80.0,
+        "OperatingIncomeLoss": 110.0,
         "Assets": 1000.0,
         "NetCashProvidedByUsedInOperatingActivities": 120.0,
         "LongTermDebtNoncurrent": 250.0,
@@ -522,10 +524,11 @@ IMPROVING = {
 #: The mirror image: in 2024 only the accrual test passes, and only because operating
 #: cash flow, while negative, is less negative than net income.
 DETERIORATING = {
-    2022: {"Assets": 1000.0, "NetIncomeLoss": 40.0},
+    2022: {"Assets": 1000.0, "NetIncomeLoss": 40.0, "OperatingIncomeLoss": 60.0},
     2023: IMPROVING[2024],
     2024: {
         "NetIncomeLoss": -10.0,
+        "OperatingIncomeLoss": -5.0,
         "Assets": 1000.0,
         "NetCashProvidedByUsedInOperatingActivities": -5.0,
         "LongTermDebtNoncurrent": 400.0,
@@ -633,3 +636,124 @@ class TestPiotroski:
         b.done()
         prepare(store, AS_OF)
         assert 1 not in by_cik(piotroski_rows(store))
+
+
+def _with(years: dict, year: int, **changes) -> dict:
+    return {**years, year: {**years[year], **changes}}
+
+
+class TestPiotroskiReadsOperatingIncome:
+    """A Pass A run over 18 Piotroski-flagged filers found 8 whose improvement the filing
+    itself attributes to something that does not repeat. Net income carries all of it:
+    Ennis's legal settlement and Masco's lapped Kichler sale loss sit below the operating
+    line, Comcast's Hulu gain in other income, CarGurus' losses in discontinued
+    operations. The profitability tests read operating income, which excludes them."""
+
+    def test_a_gain_below_the_operating_line_does_not_score_as_improvement(self, store):
+        # Net income doubles on a one-off while operating income falls.
+        b = StoreBuilder(store)
+        screened_filer(b, 1, _with(IMPROVING, 2024, NetIncomeLoss=100.0, OperatingIncomeLoss=65.0))
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(piotroski_rows(store))[1]
+        assert row["operating_roa"] < row["operating_roa_1"]
+        assert row["f_delta_roa"] == 0
+
+    def test_a_loss_below_the_operating_line_does_not_fail_profitability(self, store):
+        b = StoreBuilder(store)
+        screened_filer(b, 1, _with(IMPROVING, 2024, NetIncomeLoss=-30.0))
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(piotroski_rows(store))[1]["f_roa"] == 1
+
+    def test_the_accrual_test_still_reads_net_income(self, store):
+        """Cash flow above net income is the check that a gain in net income is not
+        cash. Moving it to operating income would stop it catching exactly that."""
+        b = StoreBuilder(store)
+        screened_filer(b, 1, _with(IMPROVING, 2024, NetIncomeLoss=150.0))
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(piotroski_rows(store))[1]["f_accrual"] == 0
+
+    def test_no_operating_income_leaves_a_filer_unranked_and_counted(self, store):
+        """No silent fallback to net income: that would readmit the one-offs this fixes."""
+        from dossier.screens import build_candidates
+
+        b = StoreBuilder(store)
+        screened_filer(b, 1, _with(IMPROVING, 2024, OperatingIncomeLoss=None))
+        b.done()
+        run = build_candidates(store, AS_OF)
+        prepare(store, AS_OF)
+        assert by_cik(piotroski_rows(store))[1]["rank"] is None
+        assert run["screens"]["piotroski"]["missing_data"] == {"no operating income": 1}
+
+
+class TestUnusualItemsTravelWithAPiotroskiFlag:
+    """Some one-offs sit inside operating income: Best Buy's impairments fell from $475M
+    to $171M, Sally Beauty booked a $26.6M headquarters gain in SG&A. Where those are
+    tagged, the flag carries them, so a reader sees how much of the year is unusual."""
+
+    def test_reported_items_are_netted_into_their_effect_on_income(self, store):
+        b = StoreBuilder(store)
+        years = _with(IMPROVING, 2023, AssetImpairmentCharges=40.0)
+        years = _with(
+            years, 2024, AssetImpairmentCharges=10.0, GainLossOnSaleOfPropertyPlantEquipment=5.0
+        )
+        screened_filer(b, 1, years)
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(piotroski_rows(store))[1]
+        assert row["unusual_effect"] == -5.0  # a 5 gain less a 10 charge
+        assert row["unusual_effect_1"] == -40.0
+        assert row["unusual_change"] == 35.0
+
+    def test_ingest_keeps_every_element_the_figure_reads(self):
+        """A tag the figures read but ingest drops is a column that is always NULL, and
+        a NULL here reads as 'nothing unusual' to anyone skimming."""
+        from dossier.figures import ANNUAL_TAGS
+        from dossier.ingest import SCREEN_TAGS
+
+        assert {tag for tag, _ in ANNUAL_TAGS} <= SCREEN_TAGS
+
+    def test_a_filer_reporting_none_has_no_figure_rather_than_zero(self, store):
+        """Absent tags are not evidence of no unusual items, only of none tagged."""
+        b = StoreBuilder(store)
+        screened_filer(b, 1, IMPROVING)
+        b.done()
+        prepare(store, AS_OF)
+        row = by_cik(piotroski_rows(store))[1]
+        assert row["unusual_effect"] is None
+        assert row["unusual_change"] is None
+
+    @pytest.mark.parametrize(
+        ("tags", "effect"),
+        [
+            ({"GoodwillImpairmentLoss": 7.0, "ImpairmentOfLongLivedAssetsHeldForUse": 3.0}, -10.0),
+            # The aggregate wins over its parts, or the same charge counts twice.
+            ({"AssetImpairmentCharges": 10.0, "GoodwillImpairmentLoss": 7.0}, -10.0),
+            ({"RestructuringCharges": 4.0}, -4.0),
+            ({"GainLossRelatedToLitigationSettlement": 6.0}, 6.0),
+            ({"GainsLossesOnExtinguishmentOfDebt": -2.0}, -2.0),
+            ({"GainLossOnSaleOfBusiness": 9.0}, 9.0),
+            ({"IncomeLossFromDiscontinuedOperationsNetOfTax": -8.0}, -8.0),
+        ],
+    )
+    def test_each_kind_of_item_is_read_with_its_sign(self, store, tags, effect):
+        b = StoreBuilder(store)
+        screened_filer(b, 1, _with(IMPROVING, 2024, **tags))
+        b.done()
+        prepare(store, AS_OF)
+        assert by_cik(piotroski_rows(store))[1]["unusual_effect"] == effect
+
+    def test_the_flag_reason_says_when_unusual_items_carried_the_year(self, store):
+        from dossier.screens import build_candidates
+
+        b = StoreBuilder(store)
+        years = _with(IMPROVING, 2023, AssetImpairmentCharges=40.0)
+        screened_filer(b, 1, years)
+        b.done()
+        run = build_candidates(store, AS_OF)
+        (candidate,) = run["candidates"]
+        (flag,) = [f for f in candidate["flagged_by"] if f["screen"] == "piotroski"]
+        assert flag["metrics"]["unusual_change"] == 40.0
+        assert "unusual items" in flag["reason"]
