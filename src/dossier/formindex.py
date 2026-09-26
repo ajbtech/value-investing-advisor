@@ -13,8 +13,11 @@ row says.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from typing import TypeVar
+
+T = TypeVar("T")
 
 #: `form.idx` is column-aligned, not delimited: form type, company name, CIK, date, path.
 #: Splitting on runs of two or more spaces survives company names containing single
@@ -37,6 +40,36 @@ def form_index_url(year: int, quarter: int) -> str:
     if quarter not in (1, 2, 3, 4):
         raise ValueError(f"quarter must be 1-4, got {quarter}")
     return f"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/form.idx"
+
+
+def read_quarters(
+    fetch: Callable[[int, int], str],
+    from_year: int,
+    to_year: int,
+    *,
+    parse: Callable[[str], list[T]],
+    label: str,
+) -> tuple[list[T], list[dict]]:
+    """Fetch and parse every quarterly index from `from_year` to `to_year` inclusive.
+
+    Returns everything parsed, and one report per quarter: how many records it
+    yielded under `label`, or the error that stopped it. A quarter that has not
+    happened yet, or a gap in the archive, is not a reason to lose the quarters that
+    did parse.
+    """
+    found: list[T] = []
+    quarters: list[dict] = []
+    for year in range(from_year, to_year + 1):
+        for quarter in (1, 2, 3, 4):
+            try:
+                text = fetch(year, quarter)
+            except Exception as exc:
+                quarters.append({"year": year, "quarter": quarter, "error": str(exc)[:120]})
+                continue
+            parsed = parse(text)
+            found.extend(parsed)
+            quarters.append({"year": year, "quarter": quarter, label: len(parsed)})
+    return found, quarters
 
 
 def index_rows(text: str) -> Iterator[IndexRow]:

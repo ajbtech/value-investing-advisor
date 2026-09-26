@@ -20,7 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
-from dossier.edgar import RateLimiter
+from dossier.ratelimit import RateLimiter
 
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 SOURCE = "yahoo"
@@ -31,6 +31,27 @@ USER_AGENT = "Mozilla/5.0 (compatible; dossier research tool)"
 
 #: Unofficial endpoint, so stay well under anything that looks like load.
 MAX_REQUESTS_PER_SECOND = 2
+
+
+PRICES_JOB = "fetch_prices"
+
+#: `ticker_of` for a CIK the store has no filer row for, as distinct from a filer that
+#: has no ticker. The first needs `dossier ingest`; the second has nothing to price.
+NOT_INGESTED = object()
+
+
+def ticker_of(conn: sqlite3.Connection, cik: int) -> str | None | object:
+    """The filer's listed ticker, None if it has none, or NOT_INGESTED."""
+    row = conn.execute("SELECT ticker FROM filer WHERE cik = ?", (cik,)).fetchone()
+    return NOT_INGESTED if row is None else row["ticker"]
+
+
+def priceable_ciks(conn: sqlite3.Connection) -> list[int]:
+    """Every filer with a ticker to price, in CIK order."""
+    return [
+        row[0]
+        for row in conn.execute("SELECT cik FROM filer WHERE ticker IS NOT NULL ORDER BY cik")
+    ]
 
 
 class PriceSourceError(RuntimeError):

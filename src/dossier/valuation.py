@@ -20,10 +20,9 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from statistics import mean
 
-from dossier.analysis import prompt_text
-from dossier.screens import annual_rows, prepare
+from dossier.figures import annual_rows, maintenance_capex, prepare_figures
+from dossier.prompt_files import prompt_text
 
 #: One number, set once, applied to every filer. Letting it vary per company is how a
 #: DCF becomes a machine for justifying whatever you already wanted to buy.
@@ -38,9 +37,6 @@ MARGIN_OF_SAFETY = 0.30
 
 #: Years projected explicitly before the terminal value takes over.
 PROJECTION_YEARS = 10
-
-#: Years of capex history behind the revenue-scaled maintenance estimate.
-MAINTENANCE_CAPEX_YEARS = 7
 
 VALUATION_VERSION = "1"
 
@@ -148,35 +144,6 @@ class Inputs:
             "market_cap": self.market_cap,
             "history": self.history,
         }
-
-
-def maintenance_capex(rows: list[dict]) -> dict | None:
-    """Two estimates of what a company must spend to stand still, and their spread.
-
-    Filers do not report maintenance capex. Total capex is an upper bound that counts
-    growth spending as maintenance; the revenue-scaled historical average is what this
-    company has typically spent per dollar of revenue. The lesser is used, and both are
-    kept: a wide spread means the estimate is doing a lot of work and the reader should
-    see that rather than a single confident number.
-    """
-    usable = [r for r in rows if r.get("capex") is not None][:MAINTENANCE_CAPEX_YEARS]
-    if not usable:
-        return None
-
-    total_capex = float(usable[0]["capex"])
-    rates = [float(r["capex"]) / float(r["revenue"]) for r in usable if r.get("revenue")]
-    latest_revenue = usable[0].get("revenue")
-    revenue_scaled = mean(rates) * float(latest_revenue) if rates and latest_revenue else None
-
-    used = total_capex if revenue_scaled is None else min(total_capex, revenue_scaled)
-    spread = None if revenue_scaled is None else abs(total_capex - revenue_scaled)
-    return {
-        "total_capex": total_capex,
-        "revenue_scaled": revenue_scaled,
-        "used": used,
-        "spread": spread,
-        "years": len(usable),
-    }
 
 
 def scenario_value(
@@ -372,7 +339,7 @@ def historical_inputs(conn: sqlite3.Connection, cik: int, as_of: date | str) -> 
 
 def prepare_valuation(conn: sqlite3.Connection, cik: int, as_of: date | str) -> dict:
     """Write the valuation's input: the figures, the findings, and the fixed rules."""
-    prepare(conn, as_of)
+    prepare_figures(conn, as_of, ciks=[cik])
     inputs = historical_inputs(conn, cik, as_of)
     findings = [
         dict(row)
@@ -436,7 +403,7 @@ def load_valuation(conn: sqlite3.Connection, cik: int, as_of: date | str, payloa
     unjustified input is worse than no valuation: it looks exactly like a good one.
     """
     assumptions = _assumptions_from(payload)
-    prepare(conn, as_of)
+    prepare_figures(conn, as_of, ciks=[cik])
     inputs = historical_inputs(conn, cik, as_of)
     result = value(inputs, assumptions)
     result["prompt_version"] = VALUATION_PROMPT

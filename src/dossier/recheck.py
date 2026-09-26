@@ -24,9 +24,9 @@ import sqlite3
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from dossier.screens import annual_rows, prepare
-from dossier.thesis import _append_journal, stored_thesis
-from dossier.valuation import maintenance_capex
+from dossier.figures import annual_rows, maintenance_capex, prepare_figures
+from dossier.journal import append_entry
+from dossier.thesis import stored_thesis
 
 RECHECK_VERSION = "1"
 
@@ -206,7 +206,7 @@ def recheck_thesis(
         raise ValueError(f"no thesis for CIK {cik} as of {as_of} to re-check")
 
     run_date = str(on or date.today().isoformat())
-    prepare(conn, run_date)
+    prepare_figures(conn, run_date, ciks=[cik])
     series = _metric_series([dict(row) for row in annual_rows(conn, cik)])
 
     conditions = [_evaluate(c, series) for c in thesis["thesis"]["falsification"]]
@@ -265,7 +265,7 @@ def recheck_thesis(
             ),
         )
 
-    _append_journal(
+    append_entry(
         journal_dir,
         {"kind": "recheck", **report},
         f"{cik}-{as_of}-recheck-{run_date}",

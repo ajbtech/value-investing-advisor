@@ -16,9 +16,9 @@ from dossier.edgar import (
     EDGAR_MAX_REQUESTS_PER_SECOND,
     EdgarClient,
     InvalidUserAgent,
-    RateLimiter,
     SecBlocked,
 )
+from dossier.ratelimit import RateLimiter
 
 VALID_UA = "Jane Doe jane@example.com"
 

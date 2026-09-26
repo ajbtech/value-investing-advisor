@@ -48,6 +48,17 @@ def connect(path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+def row_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    """How many filers and filings the store holds, for `dossier status`.
+
+    Facts are counted by `dossier.asof.fact_count`, the only code that reads that table.
+    """
+    return {
+        "filers": conn.execute("SELECT COUNT(*) FROM filer").fetchone()[0],
+        "filings": conn.execute("SELECT COUNT(*) FROM filing").fetchone()[0],
+    }
+
+
 @contextmanager
 def open_store(path: Path | str) -> Iterator[sqlite3.Connection]:
     """Open the store for the duration of a block, closing it afterwards."""

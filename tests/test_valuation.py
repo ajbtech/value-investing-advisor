@@ -8,6 +8,7 @@ the margin of safety — is a constant in code that no input can move.
 
 import pytest
 
+from dossier.figures import maintenance_capex
 from dossier.valuation import (
     DISCOUNT_RATE,
     MARGIN_OF_SAFETY,
@@ -15,7 +16,6 @@ from dossier.valuation import (
     Assumption,
     Inputs,
     implied_growth,
-    maintenance_capex,
     scenario_value,
     value,
 )

@@ -108,7 +108,8 @@ class TestADeadFilerIsCountedNotHidden:
     there was no listed ticker to judge. The reason has to say what happened."""
 
     def _eligible_but_unpriced(self, store, *, status="active", status_date=None):
-        from dossier.screens import prepare, universe_rows
+        from dossier.figures import universe_rows
+        from dossier.screens import prepare
 
         b = StoreBuilder(store)
         b.filer(1, name="Unpriced Co", ticker=None, status=status, status_date=status_date)
@@ -132,7 +133,8 @@ class TestADeadFilerIsCountedNotHidden:
         assert reason.startswith("no price for a filer that later stopped filing")
 
     def test_a_ticker_that_is_not_common_stock_keeps_its_own_reason(self, store):
-        from dossier.screens import prepare, universe_rows
+        from dossier.figures import universe_rows
+        from dossier.screens import prepare
 
         b = StoreBuilder(store)
         b.filer(2, name="Preferred Listed Co", ticker="SCE-PG")

@@ -110,6 +110,11 @@ def tags_version(tags) -> str:
 
 INGEST_VERSION = tags_version(SCREEN_TAGS)
 
+#: Job types, named once. `resume` dispatches on these, and a mistyped one would leave
+#: failed jobs that nothing ever retries.
+INGEST_JOB = "ingest_filer"
+BULK_FACTS_JOB = "ingest_facts_bulk"
+
 
 @dataclass(frozen=True)
 class FilerRecord:
@@ -365,6 +370,11 @@ def ingest_filer(
                 result.filings_inserted += 1
         result.facts_inserted = _insert_facts(conn, facts)
     return result
+
+
+def held_ciks(conn: sqlite3.Connection) -> list[int]:
+    """Every filer in the store, in CIK order."""
+    return [row[0] for row in conn.execute("SELECT cik FROM filer ORDER BY cik")]
 
 
 def ingest_facts(

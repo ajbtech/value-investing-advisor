@@ -16,14 +16,14 @@ evidence cannot be reconstructed after the fact. That asymmetry decides every ru
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from dossier.analysis import prompt_text
 from dossier.findings import quote_appears_in, reads_as_recommendation
+from dossier.journal import append_entry
+from dossier.prompt_files import prompt_text
 from dossier.valuation import stored_valuation
 
 #: v2 names the metrics `dossier recheck` can evaluate on its own. The first live
@@ -236,7 +236,7 @@ def load_thesis(
         "thesis": thesis,
         "valuation": stored_valuation(conn, cik, as_of),
     }
-    path = _append_journal(journal_dir, entry, f"{cik}-{as_of}-thesis-v{version}")
+    path = append_entry(journal_dir, entry, f"{cik}-{as_of}-thesis-v{version}")
     return {"cik": cik, "as_of": as_of, "version": version, "journal_entry": path}
 
 
@@ -275,6 +275,12 @@ def stored_thesis(
         "thesis": json.loads(row["payload"]),
         "bear": bear,
     }
+
+
+def latest_as_of(conn: sqlite3.Connection, cik: int) -> str | None:
+    """The as-of date of the filer's most recent thesis, or None if it has none."""
+    row = conn.execute("SELECT MAX(as_of) AS as_of FROM thesis WHERE cik = ?", (cik,)).fetchone()
+    return row["as_of"] if row else None
 
 
 # -- the bear pass -------------------------------------------------------------------
@@ -405,7 +411,7 @@ def load_bear_pass(
         # points has not earned a clean bill of health.
         "fabrication_rate": None if total == 0 else dropped / total,
     }
-    _append_journal(
+    append_entry(
         journal_dir,
         {
             "kind": "bear_pass",
@@ -420,36 +426,7 @@ def load_bear_pass(
     return result
 
 
-# -- the journal ---------------------------------------------------------------------
-
-
-def _append_journal(journal_dir: Path | None, entry: dict, stem: str) -> str | None:
-    """Write one decision as its own file, never touching an existing one.
-
-    Append-only in the plainest sense: a new name every time, so nothing that was
-    written can be revised by writing again. The journal lives in a directory the user
-    chooses — never in this public repository — and it is the one artifact here that
-    cannot be rebuilt from EDGAR.
-    """
-    if journal_dir is None:
-        return None
-    directory = Path(journal_dir)
-    directory.mkdir(parents=True, exist_ok=True)
-
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
-    path = directory / f"{stamp}-{stem}.json"
-    suffix = 1
-    while path.exists():
-        suffix += 1
-        path = directory / f"{stamp}-{stem}-{suffix}.json"
-
-    # Written and fsynced before anything reports success, for the same reason the job
-    # table does it: the alternative loses work on a crash, and loses it silently.
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(entry, handle, indent=2)
-        handle.flush()
-        os.fsync(handle.fileno())
-    return str(path)
+# -- pass-overs ----------------------------------------------------------------------
 
 
 def record_pass_over(
@@ -466,7 +443,7 @@ def record_pass_over(
             "a pass-over needs a reason. 'Did not like it' recorded now is worth more "
             "in two years than nothing recorded at all, but a blank is worth nothing."
         )
-    return _append_journal(
+    return append_entry(
         journal_dir,
         {
             "kind": "pass_over",

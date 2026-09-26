@@ -8,7 +8,9 @@ never there.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 
@@ -188,7 +190,7 @@ class AsOfView:
 
     # -- materialised state, for SQL ----------------------------------------
 
-    def materialise(self) -> None:
+    def materialise(self, ciks: Iterable[int] | None = None) -> None:
         """Write this view's state of knowledge into TEMP tables for SQL to read.
 
         The screens are SQL, and a view defined on `fact` directly would be a second
@@ -202,9 +204,17 @@ class AsOfView:
         - `universe_asof`: filers that were filing and had not failed by then.
         - `asof_param`: the date itself, for views that need it.
 
+        `ciks` narrows every table to those filers, for a caller that needs one
+        company's state rather than the whole store's. It narrows who, never when.
+
         TEMP tables belong to this connection alone and vanish when it closes.
         """
         placeholders = ", ".join("?" for _ in TERMINAL_STATUSES)
+        if ciks is None:
+            scope, scoped = "", ()
+        else:
+            scope = "AND cik IN (SELECT value FROM json_each(?))"
+            scoped = (json.dumps(sorted({int(cik) for cik in ciks})),)
         statements = [
             ("DROP TABLE IF EXISTS temp.asof_param", ()),
             ("DROP TABLE IF EXISTS temp.fact_asof", ()),
@@ -213,7 +223,7 @@ class AsOfView:
             ("DROP TABLE IF EXISTS temp.universe_asof", ()),
             ("CREATE TEMP TABLE asof_param AS SELECT ? AS as_of", (self._as_of,)),
             (
-                """
+                f"""
                 CREATE TEMP TABLE fact_asof AS
                 SELECT cik, tag, unit, period_start, period_end, value, filed_date,
                        accession_no, form_type
@@ -222,30 +232,31 @@ class AsOfView:
                         PARTITION BY cik, tag, unit, period_start, period_end
                         ORDER BY filed_date DESC, accession_no DESC
                     ) AS version
-                    FROM fact WHERE filed_date <= ?
+                    FROM fact WHERE filed_date <= ? {scope}
                 )
                 WHERE version = 1
                 """,
-                (self._as_of,),
+                (self._as_of, *scoped),
             ),
             ("CREATE INDEX temp.fact_asof_period ON fact_asof (cik, period_end)", ()),
             (
-                """
+                f"""
                 CREATE TEMP TABLE price_asof AS
                 SELECT cik, ticker, price_date, close, source
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
                         PARTITION BY cik ORDER BY price_date DESC
                     ) AS recency
-                    FROM price WHERE price_date <= ?
+                    FROM price WHERE price_date <= ? {scope}
                 )
                 WHERE recency = 1
                 """,
-                (self._as_of,),
+                (self._as_of, *scoped),
             ),
             (
-                "CREATE TEMP TABLE filing_asof AS SELECT * FROM filing WHERE filed_date <= ?",
-                (self._as_of,),
+                "CREATE TEMP TABLE filing_asof AS "
+                f"SELECT * FROM filing WHERE filed_date <= ? {scope}",
+                (self._as_of, *scoped),
             ),
             (
                 f"""
@@ -257,8 +268,9 @@ class AsOfView:
                         OR status_date IS NULL
                         OR status_date > ?
                       )
+                  {scope}
                 """,
-                (self._as_of, *TERMINAL_STATUSES, self._as_of),
+                (self._as_of, *TERMINAL_STATUSES, self._as_of, *scoped),
             ),
         ]
         with self.conn:

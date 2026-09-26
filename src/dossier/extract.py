@@ -29,6 +29,8 @@ from datetime import UTC, datetime
 #: hiding any Item heading that opened a page after one that did not end in a stop.
 EXTRACTOR_VERSION = "3"
 
+EXTRACT_JOB = "extract_sections"
+
 #: Sections the analysis passes actually read.
 DEFAULT_ITEMS = ("1", "1A", "1B", "2", "7", "7A", "8")
 
@@ -341,6 +343,28 @@ def store_sections(
     if not result.items:
         result.lowest_confidence = 0.0
     return result
+
+
+def filings_to_extract(
+    conn: sqlite3.Connection,
+    *,
+    cik: int | None = None,
+    form: str = "10-K",
+    accession: str | None = None,
+) -> list[sqlite3.Row]:
+    """One named filing, or a filer's filings of one form, newest first.
+
+    Pass A diffs consecutive 10-Ks and Pass B reads their footnotes; Pass D reads the
+    proxy. Nothing else in the store is worth the fetch.
+    """
+    if accession is not None:
+        return conn.execute("SELECT * FROM filing WHERE accession_no = ?", (accession,)).fetchall()
+    if cik is None:
+        raise ValueError("name a filer or a filing to extract")
+    return conn.execute(
+        "SELECT * FROM filing WHERE cik = ? AND form_type = ? ORDER BY filed_date DESC",
+        (cik, form),
+    ).fetchall()
 
 
 def extract_filing(

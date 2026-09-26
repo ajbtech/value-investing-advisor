@@ -15,11 +15,13 @@ import os
 import re
 import tempfile
 import time
-from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+
+from dossier.formindex import form_index_url
+from dossier.ratelimit import RateLimiter
 
 EDGAR_MAX_REQUESTS_PER_SECOND = 10
 
@@ -48,37 +50,6 @@ class SecBlocked(RuntimeError):
     """The SEC refused the request outright, almost always over the User-Agent."""
 
 
-class RateLimiter:
-    """A sliding-window limiter: at most `max_per_second` requests in any one second.
-
-    The clock and sleep are injected so the pacing can be tested without spending real
-    seconds on it.
-    """
-
-    def __init__(
-        self,
-        max_per_second: int = EDGAR_MAX_REQUESTS_PER_SECOND,
-        clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
-        if max_per_second < 1:
-            raise ValueError("max_per_second must be at least 1")
-        self.max_per_second = max_per_second
-        self._clock = clock
-        self._sleep = sleep
-        self._recent: deque[float] = deque()
-
-    def acquire(self) -> None:
-        while True:
-            now = self._clock()
-            while self._recent and now - self._recent[0] >= 1.0:
-                self._recent.popleft()
-            if len(self._recent) < self.max_per_second:
-                self._recent.append(now)
-                return
-            self._sleep(self._recent[0] + 1.0 - now)
-
-
 class EdgarClient:
     """Fetches from EDGAR within the SEC's published limits."""
 
@@ -93,7 +64,7 @@ class EdgarClient:
         timeout: float = 60.0,
     ) -> None:
         self.user_agent = self._validated(user_agent)
-        self.limiter = rate_limiter or RateLimiter()
+        self.limiter = rate_limiter or RateLimiter(EDGAR_MAX_REQUESTS_PER_SECOND)
         self._sleep = sleep
         self.max_retries = max_retries
         self._client = httpx.Client(
@@ -246,6 +217,4 @@ class EdgarClient:
         the ones that died: a per-company crawl would need to know their CIKs first, and
         not knowing them is the problem.
         """
-        from dossier.formindex import form_index_url
-
         return self.get(form_index_url(year, quarter)).text

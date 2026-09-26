@@ -119,17 +119,29 @@ is not offered as a service, and carries no obligation to support anyone else.
 ## Component boundaries
 
 Each stage is a module with its own CLI entry point. Stages communicate *only* through the
-store — never by importing each other.
+store — never by importing each other. A stage may import **shared libraries** (no stage
+logic: `asof`, `figures`, `jobs`, `journal`, `prompt_files`, `ratelimit`, `store` and the
+like), and may read another stage's stored output only through that stage's named
+`stored_*` accessor. `tests/test_architecture.py` enforces this, including that no module
+imports another's private names; a new module has to be placed in a layer there.
 
 | Command | Reads | Writes |
 | --- | --- | --- |
+| `dossier universe` | EDGAR form index | `filer` + `filing` + `fact` (with `--ingest`) |
+| `dossier deregistrations` | EDGAR form index | `filer.status` |
 | `dossier ingest` | EDGAR | `filer` + `filing` + `fact` |
+| `dossier ingest --bulk` | `companyfacts.zip` on disk | `fact` |
 | `dossier extract` | `filing` | `document_section` |
 | `dossier prices` | Yahoo chart endpoint | `price` |
 | `dossier screen` | `fact` + `price` | `candidate` |
-| `dossier analyze --pass a --cik N` | `document_section` | `finding` |
-| `dossier value --cik N` | `fact` + `finding` | `valuation` |
-| `dossier serve` | everything | nothing |
+| `dossier analyze --pass a/b/d --cik N` | `document_section` | `finding` |
+| `dossier value --cik N` | `fact` + `price` + `finding` | `valuation` |
+| `dossier thesis --cik N` | `valuation` + `finding` | `thesis` + `bear_point` + journal |
+| `dossier recheck` | `thesis` + `fact` | journal |
+
+Per-filer figures (annual figures, share count, market cap, eligibility) live in
+`dossier.figures`, which can build them for just the filers a stage needs. Only the
+screener ranks filers against each other, so only it builds figures for everyone.
 
 ## SEC EDGAR access rules
 
