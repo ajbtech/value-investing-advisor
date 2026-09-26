@@ -814,11 +814,15 @@ bypass would make it a control for every session, at the cost of the owner going
 a PR too.
 
 CI now lints with ruff's `PTH` rules (enforcing "pathlib everywhere"), and Dependabot
-proposes weekly updates for `uv` and GitHub Actions. **Pending on branch
-`claude/ci-workflow`, not yet pushed:** a read-only workflow token and `uv sync
---locked`. Pushing any change under `.github/workflows/` needs the `gh` token's
-`workflow` scope, which this machine's login does not have (`gh auth refresh -h
-github.com -s workflow`). A type checker is the remaining gap worth closing.
+proposes weekly updates for `uv` and GitHub Actions. The workflow token is read-only
+and installs use `uv sync --locked` (#32). Pushing any change under
+`.github/workflows/` needs the `gh` token's `workflow` scope, granted 2026-09-25.
+
+**mypy runs in CI** over `src/dossier` with `check_untyped_defs`. Its first run found
+27 errors and no live bug: every one was a guarantee the code relied on without saying
+so. Most were `Outcome.value` read after a status check mypy cannot see, now
+`Outcome.produced()`, which raises on anything but `done` rather than handing back a
+silent None. The tests are not type-checked; they are checked by running them.
 
 ## Known environment constraints
 

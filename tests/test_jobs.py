@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from dossier.jobs import MAX_ATTEMPTS, JobQueue, idempotency_key, write_durably
+from dossier.jobs import MAX_ATTEMPTS, JobQueue, Outcome, idempotency_key, write_durably
 from dossier.store import open_store
 
 
@@ -379,6 +379,18 @@ class TestRun:
         )
         assert outcome.value == {"a", "b"}
         assert json.loads(outcome.job.read_output()) == ["a", "b"]
+
+    def test_produced_is_the_value_of_work_that_ran(self, queue):
+        outcome = queue.run("ingest_filer", {"cik": 1}, lambda: {"facts": 3})
+        assert outcome.produced() == {"facts": 3}
+
+    @pytest.mark.parametrize("status", ["cached", "failed", "skipped"])
+    def test_produced_refuses_an_outcome_where_nothing_ran(self, queue, status):
+        """Only a `done` outcome carries a value. Asking any other for one is a caller
+        that skipped the status check, and a silent None would hide that."""
+        job = queue.enqueue("ingest_filer", {"cik": 1})
+        with pytest.raises(ValueError, match=status):
+            Outcome(status, job).produced()
 
     def test_output_is_on_disk_before_the_job_says_done(self, queue, monkeypatch):
         """Write then mark, through `run` exactly as through `finish`."""

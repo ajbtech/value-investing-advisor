@@ -18,6 +18,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.6",
     "pyyaml>=6.0",
+    "mypy>=1.11",
 ]
 
 [build-system]
@@ -37,6 +38,16 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.mypy]
+# The package, not the tests: the tests are checked by running them.
+files = ["src/dossier"]
+python_version = "3.11"
+# Without this, mypy skips the body of any function lacking annotations, which is most
+# of the CLI's helpers.
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
 
 [tool.ruff.lint]
 # PTH enforces CLAUDE.md's "pathlib everywhere", which was a convention with no check.

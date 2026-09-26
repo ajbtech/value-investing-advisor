@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, cast
 
 T = TypeVar("T")
 
@@ -149,6 +149,13 @@ class Outcome(Generic[T]):
     value: T | None = None
     error: str | None = None
 
+    def produced(self) -> T:
+        """The value of work that ran. Any other outcome has none, and asking is an error
+        rather than a None, which would hide a caller that skipped the status check."""
+        if self.status != "done":
+            raise ValueError(f"a {self.status} outcome produced nothing")
+        return cast(T, self.value)
+
 
 class JobQueue:
     """Durable work queue over the store's `job` table."""
@@ -221,6 +228,8 @@ class JobQueue:
                     _now(),
                 ),
             )
+        # Always set after a successful INSERT; typed Optional for other statements.
+        assert cursor.lastrowid is not None
         return self.get(cursor.lastrowid)
 
     def claim(self, job_type: str | None = None) -> Job | None:

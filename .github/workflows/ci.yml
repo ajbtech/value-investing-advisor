@@ -46,6 +46,9 @@ jobs:
       - name: Check formatting
         run: uv run ruff format --check .
 
+      - name: Type check
+        run: uv run mypy
+
       # Network tests are deselected by default, so nothing here touches sec.gov.
       - name: Test
         run: uv run pytest

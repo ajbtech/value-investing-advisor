@@ -20,6 +20,7 @@ import sqlite3
 from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import NoReturn
 
 from dossier.findings import quote_appears_in, reads_as_recommendation
 from dossier.journal import append_entry
@@ -73,7 +74,7 @@ REASON_EXAMPLES = (
 )
 
 
-def _fail(section: str, message: str) -> None:
+def _fail(section: str, message: str) -> NoReturn:
     raise ValueError(f"{section}: {message}")
 
 
