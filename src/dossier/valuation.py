@@ -38,7 +38,8 @@ MARGIN_OF_SAFETY = 0.30
 #: Years projected explicitly before the terminal value takes over.
 PROJECTION_YEARS = 10
 
-VALUATION_VERSION = "1"
+#: 2: owner earnings deduct stock-based compensation.
+VALUATION_VERSION = "2"
 
 #: Pinned like any other prompt, so a valuation can be traced to the words behind it.
 VALUATION_PROMPT = "valuation_v1"
@@ -121,6 +122,9 @@ class Inputs:
     shares: float
     price: float | None = None
     history: list[dict] = field(default_factory=list)
+    #: Already deducted from `owner_earnings`. None when the filer tagged none, which is
+    #: not the same as reporting zero.
+    stock_compensation: float | None = None
 
     @property
     def market_cap(self) -> float | None:
@@ -139,6 +143,7 @@ class Inputs:
             "revenue": self.revenue,
             "owner_earnings": self.owner_earnings,
             "owner_earnings_margin": self.owner_earnings_margin,
+            "stock_compensation": self.stock_compensation,
             "shares": self.shares,
             "price": self.price,
             "market_cap": self.market_cap,
@@ -316,9 +321,13 @@ def historical_inputs(conn: sqlite3.Connection, cik: int, as_of: date | str) -> 
 
     history = _history(conn, cik)
     capex = maintenance_capex(history)
+    # Operating cash flow adds stock compensation back as non-cash. It is paid in
+    # shares, not cash, but it is a cost all the same: deduct it, or the valuation
+    # flatters most the filers that pay the most in stock.
+    stock_compensation = row["stock_compensation"]
     owner_earnings = None
     if row["cfo"] is not None and capex is not None:
-        owner_earnings = float(row["cfo"]) - capex["used"]
+        owner_earnings = float(row["cfo"]) - capex["used"] - float(stock_compensation or 0)
     if owner_earnings is None:
         raise ValueError(
             f"CIK {cik} has no owner earnings as of {as_of}: operating cash flow or "
@@ -334,6 +343,7 @@ def historical_inputs(conn: sqlite3.Connection, cik: int, as_of: date | str) -> 
         shares=float(row["shares"]),
         price=None if row["price"] is None else float(row["price"]),
         history=history,
+        stock_compensation=None if stock_compensation is None else float(stock_compensation),
     )
 
 
