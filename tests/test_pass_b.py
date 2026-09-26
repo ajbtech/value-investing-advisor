@@ -91,6 +91,45 @@ class TestSplittingTheNotes:
         text = "Note 3 — Inventories\nFIFO.\nNOTE 4. Debt\nRevolver.\nNote 5: Leases\nASC 842."
         assert [n["number"] for n in split_notes(text)] == ["3", "4", "5"]
 
+    def test_notes_numbered_without_the_word_note(self):
+        """Sprouts and Genpact number their notes "1. Heading"."""
+        text = "1. Organization\nA grocer.\n2. Leases\nStores are leased.\n3. Debt\nA revolver."
+        notes = split_notes(text)
+        assert [n["number"] for n in notes] == ["1", "2", "3"]
+        assert notes[1]["heading"] == "2. Leases"
+
+    def test_a_numbered_list_inside_a_note_does_not_split_it(self):
+        text = (
+            "1. Organization\nThree steps apply:\n1. Identify the contract\n"
+            "2. Identify the obligations\n2. Leases\nStores are leased."
+        )
+        notes = split_notes(text)
+        assert [n["number"] for n in notes] == ["1", "2"]
+        assert "Identify the obligations" in notes[0]["text"]
+
+    def test_a_continued_heading_on_the_next_page_is_the_same_note(self):
+        """Genpact repeats "5. Fair value measurements (Continued)" on every page."""
+        text = (
+            "1. Organization\nA services firm.\n2. Fair value measurements\nLevel 1.\n"
+            "Notes to the Consolidated Financial Statements\n"
+            "2. Fair value measurements (Continued)\nLevel 2.\n3. Derivatives\nSwaps."
+        )
+        notes = split_notes(text)
+        assert [n["number"] for n in notes] == ["1", "2", "3"]
+        assert "Level 2." in notes[1]["text"]
+
+    def test_a_cross_reference_at_the_start_of_a_line_is_not_a_heading(self):
+        """Deckers' Note 12 has a line opening "Note 9, “Stock-Based Compensation,” for
+        further information" — a pointer back, not a new note."""
+        text = (
+            "Note 12. Basic and Diluted Shares\nSee\n"
+            "Note 9, “Stock-Based Compensation,” for further information.\n"
+            "Note 13. Segments\nTwo brands."
+        )
+        notes = split_notes(text)
+        assert [n["number"] for n in notes] == ["12", "13"]
+        assert "for further information" in notes[0]["text"]
+
 
 class TestPrepare:
     def test_it_hands_over_an_index_rather_than_one_wall_of_text(self, store):

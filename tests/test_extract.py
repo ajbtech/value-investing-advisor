@@ -249,6 +249,84 @@ class TestItemNumberingEvolves:
         assert section.confidence == 1.0
 
 
+#: The shape Deckers (0001628280-26-037664) and Genpact (0001398659-26-000004) file:
+#: Item 8 is one sentence pointing past Part IV, and the statements follow the
+#: signatures, with the index to them listing the notes before the notes begin.
+FILLER = "<p>" + "The business sold footwear in many countries during the year. " * 60 + "</p>"
+AFTER_PART_IV = (
+    "<p>Item 7. Management's Discussion and Analysis</p>"
+    + FILLER
+    + "<p>Item 8. Financial Statements and Supplementary Data</p>"
+    "<p>The financial statements required by this item are filed in a separate section "
+    "following Part IV, as listed in Item 15.</p>"
+    "<p>Item 9. Changes in and Disagreements with Accountants</p><p>None.</p>"
+    "<p>PART IV</p><p>Item 15. Exhibits and Financial Statement Schedules</p>"
+    "<p>See the index to the consolidated financial statements.</p>"
+    "<p>Item 16. Form 10-K Summary</p><p>None.</p>"
+    "<p>SIGNATURES</p><p>Pursuant to the requirements of the Act, duly signed.</p>"
+    "<p>INDEX TO CONSOLIDATED FINANCIAL STATEMENTS</p>"
+    "<p>Consolidated Balance Sheets F-3</p>"
+    "<p>Notes to Consolidated Financial Statements</p><p>F-10</p>"
+    "<p>CONSOLIDATED BALANCE SHEETS</p><p>Total assets 3,500,000</p>"
+    "<p>See accompanying notes to the consolidated financial statements.</p>"
+    "<p>NOTES TO CONSOLIDATED FINANCIAL STATEMENTS</p>"
+    "<p>(amounts in thousands, except per share data)</p>"
+    "<p>{first}</p><p>The Company designs and markets footwear.</p>"
+    "<p>NOTES TO CONSOLIDATED FINANCIAL STATEMENTS</p>"
+    "<p>{second}</p><p>The Company leases its distribution centers.</p>"
+)
+
+
+class TestFinancialStatementsAfterPartIV:
+    """Some filers answer Item 8 with a pointer and file the statements after the
+    signatures. Taking the pointer as the section leaves Pass B with one sentence and no
+    footnotes, and nothing downstream says that anything is missing."""
+
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [("Note 1. General", "Note 2. Leases"), ("1. Organization", "2. Leases")],
+    )
+    def test_item_8_is_the_notes_rather_than_the_pointer(self, first, second):
+        section = extract_sections(AFTER_PART_IV.format(first=first, second=second))["8"]
+        assert section.text.startswith("NOTES TO CONSOLIDATED FINANCIAL STATEMENTS")
+        assert first in section.text
+        assert "leases its distribution centers" in section.text
+        assert "separate section following Part IV" not in section.text
+
+    def test_the_index_entry_for_the_notes_is_not_where_they_start(self):
+        section = extract_sections(
+            AFTER_PART_IV.format(first="Note 1. General", second="Note 2. Leases")
+        )["8"]
+        assert "F-10" not in section.text
+        assert "Total assets" not in section.text
+
+    def test_it_is_trusted_less_than_a_clean_parse(self):
+        section = extract_sections(
+            AFTER_PART_IV.format(first="Note 1. General", second="Note 2. Leases")
+        )["8"]
+        assert section.heading == "NOTES TO CONSOLIDATED FINANCIAL STATEMENTS"
+        assert section.ended_at is None
+        assert 0.6 <= section.confidence < 1.0
+
+    def test_a_pointer_with_no_notes_to_find_is_kept_as_it_is(self):
+        """Pass B then sees a stub, which it reports, instead of nothing at all."""
+        html = AFTER_PART_IV.split("<p>INDEX TO")[0]
+        section = extract_sections(html)["8"]
+        assert "separate section following Part IV" in section.text
+
+    def test_an_item_8_that_holds_its_own_statements_is_left_alone(self):
+        html = (
+            "<p>Item 8. Financial Statements</p>"
+            + FILLER
+            + "<p>Note 1. General</p><p>The Company makes footwear.</p>"
+            "<p>Item 9. Changes in and Disagreements with Accountants</p><p>None.</p>"
+            "<p>NOTES TO CONSOLIDATED FINANCIAL STATEMENTS</p><p>Note 1. Other</p>"
+        )
+        section = extract_sections(html)["8"]
+        assert section.text.startswith("The business sold footwear")
+        assert section.ended_at == "9"
+
+
 class TestSelection:
     def test_returns_only_the_requested_items(self, with_toc):
         sections = extract_sections(filing("tenk_with_toc"), items=("1A",))
