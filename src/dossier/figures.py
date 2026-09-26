@@ -93,11 +93,14 @@ ANNUAL_TAGS = [
     ("ImpairmentOfIntangibleAssetsExcludingGoodwill", "USD"),
     ("ImpairmentOfIntangibleAssetsIndefinitelivedExcludingGoodwill", "USD"),
     ("ImpairmentOfLongLivedAssetsHeldForUse", "USD"),
+    ("ImpairmentOfLongLivedAssetsToBeDisposedOf", "USD"),
+    ("OperatingLeaseImpairmentLoss", "USD"),
     ("RestructuringCharges", "USD"),
     ("RestructuringCosts", "USD"),
     ("GainLossOnDispositionOfAssets1", "USD"),
     ("GainLossOnDispositionOfAssets", "USD"),
     ("GainLossOnSaleOfPropertyPlantEquipment", "USD"),
+    ("GainLossOnSaleOfProperties", "USD"),
     ("GainLossOnSaleOfBusiness", "USD"),
     ("DisposalGroupNotDiscontinuedOperationGainLossOnDisposal", "USD"),
     ("GainsLossesOnExtinguishmentOfDebt", "USD"),
@@ -193,7 +196,12 @@ _GOODWILL_AND_INTANGIBLE_IMPAIRMENT = (
 )
 _IMPAIRMENT = (
     'COALESCE("AssetImpairmentCharges", '
-    + _sum_or_null(_GOODWILL_AND_INTANGIBLE_IMPAIRMENT, '"ImpairmentOfLongLivedAssetsHeldForUse"')
+    + _sum_or_null(
+        _GOODWILL_AND_INTANGIBLE_IMPAIRMENT,
+        '"ImpairmentOfLongLivedAssetsHeldForUse"',
+        '"ImpairmentOfLongLivedAssetsToBeDisposedOf"',
+        '"OperatingLeaseImpairmentLoss"',
+    )
     + ")"
 )
 
@@ -207,7 +215,7 @@ _UNUSUAL_ITEMS = [
     ('COALESCE("RestructuringCharges", "RestructuringCosts")', -1),
     (
         'COALESCE("GainLossOnDispositionOfAssets1", "GainLossOnDispositionOfAssets", '
-        '"GainLossOnSaleOfPropertyPlantEquipment")',
+        '"GainLossOnSaleOfPropertyPlantEquipment", "GainLossOnSaleOfProperties")',
         1,
     ),
     (

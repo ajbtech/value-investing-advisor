@@ -742,6 +742,19 @@ class TestUnusualItemsTravelWithAPiotroskiFlag:
                 -192.0,
             ),
             ({"ImpairmentOfIntangibleAssetsIndefinitelivedExcludingGoodwill": 4.0}, -4.0),
+            # Genpact: assets held for sale and leases, beside long-lived assets in use.
+            (
+                {
+                    "ImpairmentOfLongLivedAssetsToBeDisposedOf": 2.0,
+                    "OperatingLeaseImpairmentLoss": 7.0,
+                    "ImpairmentOfLongLivedAssetsHeldForUse": 1.0,
+                },
+                -10.0,
+            ),
+            # Sally Beauty reports its headquarters gain both inside the broad disposal
+            # element and alone. The broad one wins; the narrow one is only a fallback.
+            ({"GainLossOnDispositionOfAssets1": 27.0, "GainLossOnSaleOfProperties": 26.0}, 27.0),
+            ({"GainLossOnSaleOfProperties": 26.0}, 26.0),
             ({"RestructuringCharges": 4.0}, -4.0),
             ({"GainLossRelatedToLitigationSettlement": 6.0}, 6.0),
             ({"GainsLossesOnExtinguishmentOfDebt": -2.0}, -2.0),
