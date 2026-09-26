@@ -90,6 +90,7 @@ SCREEN_TAGS: frozenset[str] = frozenset(
         # flagged filers improving mainly on something that does not repeat; where the
         # filer tags it, the screen now says so rather than leaving it to be read.
         "AssetImpairmentCharges",
+        "GoodwillAndIntangibleAssetImpairment",
         "GoodwillImpairmentLoss",
         "ImpairmentOfIntangibleAssetsExcludingGoodwill",
         "ImpairmentOfIntangibleAssetsIndefinitelivedExcludingGoodwill",
