@@ -878,6 +878,48 @@ $150M. Genpact and Autodesk impair leases and held-for-sale assets under two mor
 elements. Impairment elements now nest, each aggregate winning over its own parts, and
 a test pins every case found.
 
+## From thirty candidates to three theses — 2026-09-26
+
+The v8 screen as of 2026-09-24 was read end to end: Pass A over Item 1A and Item 7 for
+29 of 30 candidates (Nano Dimension has one 10-K), then a triage of which flags the
+filings left standing. A private results page carries every finding with its quote and
+filing: <https://claude.ai/artifact/UT9FdM5hazXXYw63gdXqWP>.
+
+- **4 shortlisted** (nothing in the filings undercut the flag): Deckers, VeriSign,
+  Allegion, Logitech.
+- **7 flag stands, one open question**: Autodesk, Sprouts, Paylocity, Cirrus Logic,
+  Genpact, Korn Ferry, Armstrong.
+- **18 flag undercut** by the filing itself: a one-off, a redefined measure, or a lost
+  customer or patent.
+
+All eleven in the first two tiers were valued (valuation v1, before stock compensation
+was deducted). **Eight were passed over** because the price already sat at or above the
+base case: VeriSign ($293 against $121-201), Allegion, Logitech and Armstrong above
+even their bull cases; Autodesk, Paylocity, Cirrus Logic and Korn Ferry within reach of
+their base cases. **Three got a thesis and a bear pass**, each where the price implied
+growth well below both history and the base assumption:
+
+| | Price | Bear / base / bull | Price implies | Bear pass |
+| --- | --- | --- | --- | --- |
+| Deckers | $78.59 | $79 / $127 / $176 | revenue -0.7% a year | 6 kept, 0 dropped |
+| Genpact | $33.24 | $29 / $51 / $75 | revenue -3.1% a year | 6 kept, 0 dropped |
+| Sprouts | $66.38 | $47 / $90 / $134 | revenue +2.9% a year | 6 kept, 0 dropped |
+
+Each thesis carries three machine-checkable falsification conditions and one that needs
+reading (HOKA growth, new bookings, comparable-store sales); `dossier recheck` reads
+them. Theses, bear passes and all eight pass-overs are in the journal, outside the repo.
+
+**The lesson worth keeping:** a filer that survives its own filings is usually priced
+as one. The screens surface quality and cheapness separately; only the valuation joins
+them, and it removed eight of eleven.
+
+**Known gaps in the valuation, one now fixed:** owner earnings did not deduct stock-based
+compensation, which flattered Autodesk and Paylocity most; valuation v2 deducts
+`ShareBasedCompensation` and shows it as unknown, not zero, where untagged. Debt
+principal is still not subtracted (the model values cash flow after interest), which
+matters for indebted filers. The theses were written on Pass A alone; Passes B
+(footnotes) and D (proxy) are the next step for the three.
+
 ## Branch protection — applied 2026-09-25
 
 Two repository rulesets existed from 2026-09-21 but targeted `refs/heads/Standard`, a

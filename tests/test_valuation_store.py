@@ -122,6 +122,32 @@ class TestPrepare:
         assert prepared["inputs"]["history"][0]["accession_no"] == "0000057131-26-000019"
         assert prepared["inputs"]["history"][0]["filed_date"] == "2026-06-16"
 
+    def test_owner_earnings_are_after_stock_compensation(self, store):
+        """Operating cash flow adds stock compensation back as non-cash, but it is a
+        real cost paid in shares. Left in, it flatters exactly the software and services
+        filers where it is largest: Autodesk and Paylocity were valued without it."""
+        store.execute(
+            "INSERT INTO fact (cik, tag, unit, period_start, period_end, filed_date, "
+            "accession_no, value, form_type) VALUES (?, 'ShareBasedCompensation', 'USD', "
+            "'2025-04-27', ?, '2026-06-16', '0000057131-26-000019', 20000000, '10-K')",
+            (CIK, FY),
+        )
+        prepared = prepare_valuation(store, cik=CIK, as_of="2026-09-22")
+        inputs = prepared["inputs"]
+        used = prepared["maintenance_capex"]["used"]
+        assert inputs["stock_compensation"] == 20_000_000.0
+        assert inputs["owner_earnings"] == pytest.approx(204_106_000.0 - used - 20_000_000.0)
+
+    def test_unreported_stock_compensation_shows_as_unknown_not_zero(self, store):
+        """No tag is not evidence of no stock compensation. The valuation proceeds, but
+        says the figure was missing rather than implying it was zero."""
+        prepared = prepare_valuation(store, cik=CIK, as_of="2026-09-22")
+        inputs = prepared["inputs"]
+        assert inputs["stock_compensation"] is None
+        assert inputs["owner_earnings"] == pytest.approx(
+            204_106_000.0 - prepared["maintenance_capex"]["used"]
+        )
+
     def test_it_shows_both_maintenance_capex_estimates(self, store):
         """The one genuinely hard input. Hiding the spread inside a single number is
         how an estimate stops being read as one."""
