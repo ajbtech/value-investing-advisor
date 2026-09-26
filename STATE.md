@@ -845,6 +845,39 @@ item; the helper scripts live outside the repo. Hard-wrapped filings (Deckers) n
 whitespace flattened before splitting, or every line reads as changed. For filings whose
 diff was capped, the stored commentary says which part was read.
 
+## Piotroski on operating income, with unusual items attached — screener v8
+
+The finding above changed the screen. Piotroski's return-on-assets tests now read
+operating income; the accrual test still reads net income, which is what catches a
+non-cash gain. A filer that tags no operating income is unranked and counted, never
+scored on net income. Every Piotroski row carries the filer's tagged unusual items
+(impairments, restructuring, disposal gains, debt extinguishment, litigation,
+discontinued operations) for both years, and the flag reason says when they moved.
+They are reported, not adjusted out: where a filer books them relative to the
+operating line varies, and adjusting blind would double-count as often as it corrected.
+
+Re-run as of 2026-09-24 after a bulk re-parse (no failures): Piotroski ranks **1,192**
+filers, down from 1,271, and 186 eligible filers now count as "no operating income".
+Of the 20 filers it flagged under v7:
+
+- **Dropped: Masco and La-Z-Boy.** Both had operating income fall while net income rose.
+  Clarivate and Cencora take their places in the thirty.
+- **Still flagged, now labelled:** Incyte (+$166M of tagged items year on year, the
+  litigation settlement net of a $76M impairment), CarGurus (+$165.5M, discontinued
+  operations and impairments shrinking), Best Buy (+$86M), Sally Beauty (+$24.8M, the
+  headquarters sale), Cavco (+$10.1M, last year's trade-name charge not recurring).
+- **Still flagged, not caught:** Ennis's legal proceeds sit in other income, but its
+  operating income did rise slightly, so it passes on operating terms; Cavco's weather
+  benefit and Leidos' contract write-ups are not taggable events at all. Reading the
+  filing is still the only check on those.
+
+Getting the unusual items right took two passes over the filers' own tags. Best Buy put
+its $171M charge only under `GoodwillAndIntangibleAssetImpairment`, which the first
+version did not read, so the flag overstated how much the smaller write-down helped by
+$150M. Genpact and Autodesk impair leases and held-for-sale assets under two more
+elements. Impairment elements now nest, each aggregate winning over its own parts, and
+a test pins every case found.
+
 ## Branch protection — applied 2026-09-25
 
 Two repository rulesets existed from 2026-09-21 but targeted `refs/heads/Standard`, a
