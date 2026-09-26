@@ -20,13 +20,14 @@ from datetime import UTC, date, datetime
 
 from dossier.asof import AsOfView
 from dossier.figures import (
-    _HI,
-    _LO,
     ANNUAL_TAGS,
     FIGURE_TABLES,
+    FISCAL_YEAR_DAYS,
     prepare_figures,
     universe_rows,
 )
+
+_LO, _HI = FISCAL_YEAR_DAYS
 
 #: A Piotroski score at or above this is flagged. Piotroski's own "high" portfolio was 8-9.
 PIOTROSKI_FLAG = 8
