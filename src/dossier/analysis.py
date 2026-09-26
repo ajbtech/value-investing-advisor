@@ -197,10 +197,52 @@ def prepare_pass_a(
 
 #: "NOTE 17:", "Note 3 — Inventories", "NOTE 4. Debt". Numbered notes only: an unnumbered
 #: heading inside a note is a subheading, and splitting on it would cut a note in half.
+#: A comma after the number is a cross-reference opening a line ("Note 9, “Stock-Based
+#: Compensation,” for further information"), never a heading.
 _NOTE_HEADING = re.compile(
-    r"^[ \t]*NOTE[ \t]+(\d{1,2})[ \t]*(?:[:.—–-][ \t]*)?(.{0,90})$",
+    r"^[ \t]*NOTE[ \t]+(\d{1,2})(?![ \t]*,)[ \t]*(?:[:.—–-][ \t]*)?(.{0,90})$",
     re.IGNORECASE | re.MULTILINE,
 )
+#: "1. Organization", as Sprouts and Genpact number them. A bare number also opens every
+#: numbered list, so these count as headings only in sequence — see `split_notes`.
+_BARE_NOTE_HEADING = re.compile(
+    r"^[ \t]*(\d{1,2})\.[ \t]+([A-Z][^\n]{0,90})$",
+    re.MULTILINE,
+)
+
+
+def _note_starts(text: str) -> list[re.Match]:
+    """The heading that opens each note, with page-by-page repeats dropped.
+
+    A number already seen is a "(Continued)" heading on the next page or a pointer back
+    to an earlier note, so only a number past the last one opens a note. Bare numbers
+    must also be the very next one, and a "1." once the notes have begun opens a list
+    ("1. Identify the contract", the revenue standard's five steps): the numbers that
+    continue that list belong to it, not to the notes.
+    """
+    matches = list(_NOTE_HEADING.finditer(text))
+    sequential = not matches
+    if sequential:
+        matches = list(_BARE_NOTE_HEADING.finditer(text))
+    starts: list[re.Match] = []
+    in_list = 0
+    for match in matches:
+        number = int(match.group(1))
+        last = int(starts[-1].group(1)) if starts else 0
+        if sequential:
+            if starts and number == 1:
+                in_list = 1
+                continue
+            if in_list and number == in_list + 1:
+                in_list = number
+                continue
+            if number != last + 1:
+                continue
+            in_list = 0
+        elif number <= last:
+            continue
+        starts.append(match)
+    return starts
 
 
 def split_notes(text: str) -> list[dict]:
@@ -212,7 +254,7 @@ def split_notes(text: str) -> list[dict]:
     that went wrong — comes back as one unnumbered note rather than as nothing, because
     nothing would look like a filing without footnotes.
     """
-    matches = list(_NOTE_HEADING.finditer(text))
+    matches = _note_starts(text)
     if not matches:
         body = text.strip()
         return [{"number": None, "heading": None, "text": body, "char_count": len(body)}]

@@ -216,6 +216,16 @@ rather than one wall of text: every numbered note with its heading and size, for
 year and last. Item 8 runs past 200,000 characters, so read the index, pick the notes
 that matter, and read those from `current.text`.
 
+Some filers answer Item 8 with one sentence pointing past Part IV and file the
+statements after the signatures (Deckers, Genpact). The extractor then stores the notes
+found there as Item 8, with `heading` set to the notes heading and confidence 0.8. If
+the index is a single unnumbered note, the notes were not found: say so rather than
+reporting a filing with no footnotes.
+
+**Load a pass's findings as one file.** A load replaces that company's earlier findings
+for the pass, so re-loading one corrected finding on its own wipes the rest. Fix the
+quote in the full file and load all of them again.
+
 **Match notes by heading, never by number.** Numbering shifts year to year — in Kodak's
 2025 filing Note 13 is Guarantees, in 2024 it was Financial Instruments.
 

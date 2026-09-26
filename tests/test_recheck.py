@@ -198,6 +198,31 @@ class TestBreaches:
         assert report["conditions"][0]["status"] == "holding"
 
 
+class TestOwnerEarningsMeanWhatTheValuationMeans:
+    """A thesis sets its owner-earnings threshold against the valuation, which deducts
+    stock compensation. Measuring before that deduction would hold every thesis to a
+    more generous number than the one it was written against, and a breach would
+    arrive a year late or not at all."""
+
+    def test_stock_compensation_is_deducted(self, store):
+        store.execute(
+            "INSERT INTO fact (cik, tag, unit, period_start, period_end, filed_date, "
+            "accession_no, value, form_type) VALUES (?, 'ShareBasedCompensation', 'USD', "
+            "'2025-04-27', '2026-04-25', '2026-06-16', '0000057131-26-000019', "
+            "20_000_000, '10-K')",
+            (CIK,),
+        )
+        store.commit()
+        with_thesis(store, [MARGIN_CONDITION, OPERATING_CONDITION])
+        margin = recheck_thesis(store, cik=CIK, as_of="2026-09-22")["conditions"][0]
+        assert margin["observed"][0]["value"] == pytest.approx(0.015, abs=1e-4)
+
+    def test_unreported_stock_compensation_leaves_the_margin_as_it_was(self, store):
+        with_thesis(store, [MARGIN_CONDITION, OPERATING_CONDITION])
+        margin = recheck_thesis(store, cik=CIK, as_of="2026-09-22")["conditions"][0]
+        assert margin["observed"][0]["value"] == pytest.approx(0.025, abs=1e-4)
+
+
 class TestItNeverClaimsToHaveCheckedWhatItCannot:
     def test_an_uncomputable_metric_is_flagged_for_a_human(self, store):
         """The failure that would matter most: reporting a thesis as holding because the

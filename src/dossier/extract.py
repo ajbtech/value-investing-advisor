@@ -27,7 +27,8 @@ from datetime import UTC, datetime
 #: from cache — the same reason prompt_version exists for the analysis passes.
 #: 3: a page break before a capitalised line no longer joins the lines, which had been
 #: hiding any Item heading that opened a page after one that did not end in a stop.
-EXTRACTOR_VERSION = "3"
+#: 4: an Item 8 that only points past Part IV is replaced by the notes filed there.
+EXTRACTOR_VERSION = "4"
 
 EXTRACT_JOB = "extract_sections"
 
@@ -217,7 +218,49 @@ def extract_sections(
                 heading=candidate.heading,
             )
 
+    if "8" in wanted:
+        stub = sections.get("8")
+        if stub is None or stub.char_count < POINTER_MAX_CHARS:
+            notes = _notes_after_part_iv(text)
+            if notes is not None:
+                sections["8"] = notes
+
     return {item: section for item, section in sections.items() if section.text}
+
+
+#: No real set of financial statements fits in this many characters; a pointer to them
+#: ("filed in a separate section following Part IV") always does.
+POINTER_MAX_CHARS = 2000
+
+#: The notes' own heading, with a first note directly beneath it — "Note 1. General" or
+#: "1. Organization" — past at most a couple of lines of page furniture such as
+#: "(amounts in thousands)". The index to the statements names the notes too, but is
+#: followed by a page number, which is what keeps it from matching.
+_NOTES_START = re.compile(
+    r"^[ \t]*(NOTES[ \t]+TO[ \t]+(?:THE[ \t]+)?CONSOLIDATED[ \t]+FINANCIAL[ \t]+STATEMENTS)"
+    r"[ \t]*\n(?:[^\n]{0,160}\n){0,3}?[ \t]*(?:NOTE[ \t]+)?1[ \t]*[.:—–-]",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _notes_after_part_iv(text: str) -> Section | None:
+    """The notes, for a filer whose Item 8 only points to where they are.
+
+    Deckers and Genpact file the statements after the signatures. The notes are the
+    last thing in the document, so running to its end is the expected shape rather than
+    a missing boundary — but the section was found by a fallback, and scores below a
+    clean parse for that.
+    """
+    match = _NOTES_START.search(text)
+    if match is None:
+        return None
+    return Section(
+        item="8",
+        text=text[match.start(1) :].strip(),
+        confidence=0.8,
+        ended_at=None,
+        heading=" ".join(match.group(1).split()),
+    )
 
 
 #: A proxy statement has no Item numbers, so its sections are found by name. These are
