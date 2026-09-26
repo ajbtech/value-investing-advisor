@@ -86,6 +86,23 @@ ANNUAL_TAGS = [
     ),
     ("WeightedAverageNumberOfSharesOutstandingBasic", "shares"),
     ("WeightedAverageNumberOfDilutedSharesOutstanding", "shares"),
+    # Unusual items, reported beside a Piotroski flag rather than adjusted out of it.
+    ("AssetImpairmentCharges", "USD"),
+    ("GoodwillImpairmentLoss", "USD"),
+    ("ImpairmentOfIntangibleAssetsExcludingGoodwill", "USD"),
+    ("ImpairmentOfIntangibleAssetsIndefinitelivedExcludingGoodwill", "USD"),
+    ("ImpairmentOfLongLivedAssetsHeldForUse", "USD"),
+    ("RestructuringCharges", "USD"),
+    ("RestructuringCosts", "USD"),
+    ("GainLossOnDispositionOfAssets1", "USD"),
+    ("GainLossOnDispositionOfAssets", "USD"),
+    ("GainLossOnSaleOfPropertyPlantEquipment", "USD"),
+    ("GainLossOnSaleOfBusiness", "USD"),
+    ("DisposalGroupNotDiscontinuedOperationGainLossOnDisposal", "USD"),
+    ("GainsLossesOnExtinguishmentOfDebt", "USD"),
+    ("GainLossRelatedToLitigationSettlement", "USD"),
+    ("IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity", "USD"),
+    ("IncomeLossFromDiscontinuedOperationsNetOfTax", "USD"),
 ]
 
 
@@ -152,6 +169,60 @@ _CAPEX_WITH_SOFTWARE = (
     f'{_CAPEX} + CASE WHEN "PaymentsToAcquirePropertyPlantAndEquipment" IS NULL '
     f'AND "PaymentsToAcquireProductiveAssets" IS NOT NULL THEN 0 ELSE {_SOFTWARE} END'
 )
+
+
+def _sum_or_null(*columns: str) -> str:
+    """The sum of whichever columns are reported, or NULL when none is."""
+    present = " AND ".join(f'"{c}" IS NULL' for c in columns)
+    total = " + ".join(f'COALESCE("{c}", 0)' for c in columns)
+    return f"CASE WHEN {present} THEN NULL ELSE {total} END"
+
+
+#: Items the filer itself tags as unusual, each an expression and its sign on income.
+#: Charges are reported positive and reduce income; `GainLoss` elements are positive for
+#: a gain. Within a kind, the first reported element wins, so an aggregate and its parts
+#: never count the same dollars twice — `AssetImpairmentCharges` is often the total of the
+#: goodwill and long-lived impairments reported beside it.
+_UNUSUAL_ITEMS = [
+    (
+        'COALESCE("AssetImpairmentCharges", '
+        + _sum_or_null(
+            "GoodwillImpairmentLoss",
+            "ImpairmentOfLongLivedAssetsHeldForUse",
+            "ImpairmentOfIntangibleAssetsExcludingGoodwill",
+        )
+        + ', "ImpairmentOfIntangibleAssetsIndefinitelivedExcludingGoodwill")',
+        -1,
+    ),
+    ('COALESCE("RestructuringCharges", "RestructuringCosts")', -1),
+    (
+        'COALESCE("GainLossOnDispositionOfAssets1", "GainLossOnDispositionOfAssets", '
+        '"GainLossOnSaleOfPropertyPlantEquipment")',
+        1,
+    ),
+    (
+        'COALESCE("GainLossOnSaleOfBusiness", '
+        '"DisposalGroupNotDiscontinuedOperationGainLossOnDisposal")',
+        1,
+    ),
+    ('"GainsLossesOnExtinguishmentOfDebt"', 1),
+    ('"GainLossRelatedToLitigationSettlement"', 1),
+    (
+        'COALESCE("IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity", '
+        '"IncomeLossFromDiscontinuedOperationsNetOfTax")',
+        1,
+    ),
+]
+#: Their net effect on income, NULL when the filer tagged none: an absent tag is not
+#: evidence that nothing unusual happened, only that nothing was tagged.
+_UNUSUAL_EFFECT = (
+    "CASE WHEN "
+    + " AND ".join(f"({expr}) IS NULL" for expr, _ in _UNUSUAL_ITEMS)
+    + " THEN NULL ELSE "
+    + " + ".join(f"{'-' if sign < 0 else ''}COALESCE({expr}, 0)" for expr, sign in _UNUSUAL_ITEMS)
+    + " END"
+)
+
 _EQUITY = (
     'COALESCE("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", '
     '"StockholdersEquity")'
@@ -167,6 +238,7 @@ SELECT cik, fy_end,
   COALESCE("GrossProfit", {_REVENUE} - {_COST}) AS gross_profit,
   "OperatingIncomeLoss" AS ebit,
   "NetIncomeLoss" AS net_income,
+  {_UNUSUAL_EFFECT} AS unusual_effect,
   "NetCashProvidedByUsedInOperatingActivities" AS cfo,
   {_CAPEX_WITH_SOFTWARE} AS capex,
   {_SOFTWARE} AS capitalized_software,

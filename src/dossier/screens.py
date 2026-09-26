@@ -45,7 +45,7 @@ _PIOTROSKI_TESTS = [
 
 # Piotroski (2000), nine binary tests on the latest fiscal year (t) against the one
 # before it (t-1). Return on assets uses beginning-of-year assets, so t-2's balance sheet
-# is needed too. Two deliberate choices, both documented here because a reader will
+# is needed too. Four deliberate choices, all documented here because a reader will
 # trip over them:
 #
 # - A filer with no long-term debt in either year passes the leverage test. Strictly,
@@ -54,12 +54,25 @@ _PIOTROSKI_TESTS = [
 # - A filer is ranked only if all nine tests could be computed. Six passes out of six
 #   computable tests is not comparable to six out of nine, so an incomplete score is
 #   reported, never ranked.
+# - Return on assets, and its change, read *operating* income, not net income. A Pass A
+#   run over 18 flagged filers found 8 whose improvement the filing attributes to a
+#   one-off, and most of those sit below the operating line: a legal settlement, a lapped
+#   loss on a business sale, discontinued operations. Piotroski's accrual test still
+#   compares cash flow with net income, because a non-cash gain in net income is exactly
+#   what it exists to catch. There is no fallback to net income for a filer that tags no
+#   operating income: that would readmit the one-offs, so the filer goes unranked.
+# - Items the filer tags as unusual (impairments, restructuring, gains on disposals,
+#   debt extinguishment, litigation, discontinued operations) are reported with the
+#   score, not adjusted out of it: where they sit relative to the operating line varies
+#   by filer, and adjusting blind would double-count as often as it corrected.
 PIOTROSKI_SQL = f"""
 CREATE TEMP VIEW piotroski AS
 WITH seq AS (
   SELECT a.*,
     LAG(fy_end) OVER w AS fy_end_1,
     LAG(fy_end, 2) OVER w AS fy_end_2,
+    LAG(ebit) OVER w AS ebit_1,
+    LAG(unusual_effect) OVER w AS unusual_effect_1,
     LAG(net_income) OVER w AS net_income_1,
     LAG(assets) OVER w AS assets_1,
     LAG(assets, 2) OVER w AS assets_2,
@@ -74,7 +87,12 @@ WITH seq AS (
   WINDOW w AS (PARTITION BY cik ORDER BY fy_end)
 ),
 latest AS (
-  SELECT *, net_income / assets_1 AS roa, net_income_1 / assets_2 AS roa_1
+  SELECT *,
+    ebit / assets_1 AS operating_roa, ebit_1 / assets_2 AS operating_roa_1,
+    net_income / assets_1 AS roa, net_income_1 / assets_2 AS roa_1,
+    CASE WHEN unusual_effect IS NULL AND unusual_effect_1 IS NULL THEN NULL
+         ELSE COALESCE(unusual_effect, 0) - COALESCE(unusual_effect_1, 0)
+    END AS unusual_change
   FROM seq
   WHERE recency = 1
     AND julianday(fy_end) - julianday(fy_end_1) BETWEEN {_LO} AND {_HI}
@@ -82,10 +100,11 @@ latest AS (
 ),
 tested AS (
   SELECT l.*,
-    CASE WHEN roa IS NULL THEN NULL WHEN roa > 0 THEN 1 ELSE 0 END AS f_roa,
+    CASE WHEN operating_roa IS NULL THEN NULL WHEN operating_roa > 0 THEN 1 ELSE 0 END
+      AS f_roa,
     CASE WHEN cfo IS NULL THEN NULL WHEN cfo > 0 THEN 1 ELSE 0 END AS f_cfo,
-    CASE WHEN roa IS NULL OR roa_1 IS NULL THEN NULL
-         WHEN roa > roa_1 THEN 1 ELSE 0 END AS f_delta_roa,
+    CASE WHEN operating_roa IS NULL OR operating_roa_1 IS NULL THEN NULL
+         WHEN operating_roa > operating_roa_1 THEN 1 ELSE 0 END AS f_delta_roa,
     CASE WHEN cfo IS NULL OR net_income IS NULL THEN NULL
          WHEN cfo > net_income THEN 1 ELSE 0 END AS f_accrual,
     CASE WHEN NULLIF(assets, 0) IS NULL OR NULLIF(assets_1, 0) IS NULL THEN NULL
@@ -116,7 +135,8 @@ scored AS (
 )
 SELECT *,
   CASE WHEN tests_scored = 9
-       THEN RANK() OVER (PARTITION BY tests_scored = 9 ORDER BY score DESC, roa DESC) END
+       THEN RANK() OVER (PARTITION BY tests_scored = 9 ORDER BY score DESC, operating_roa DESC)
+  END
     AS rank,
   (tests_scored = 9 AND score >= {PIOTROSKI_FLAG}) AS flagged
 FROM scored
@@ -301,7 +321,9 @@ def piotroski_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 #: reason instead of as "not common stock: none", so the survivorship gap is counted.
 #: 7: capex includes capitalized software, and gross profit falls back to the
 #: ex-depreciation cost element.
-SCREENER_VERSION = "7"
+#: 8: Piotroski's return-on-assets tests read operating income, and each Piotroski row
+#: carries the filer's tagged unusual items and their change.
+SCREENER_VERSION = "8"
 
 SCREEN_JOB = "screen"
 
@@ -319,7 +341,18 @@ LABELS = {
 #: The figures each screen reports about a filer it flagged.
 _METRICS = {
     "magic_formula": ["ebit", "enterprise_value", "earnings_yield", "return_on_capital"],
-    "piotroski": ["score", "tests_scored", "roa", "roa_1", *_PIOTROSKI_TESTS],
+    "piotroski": [
+        "score",
+        "tests_scored",
+        "operating_roa",
+        "operating_roa_1",
+        "roa",
+        "roa_1",
+        "unusual_effect",
+        "unusual_effect_1",
+        "unusual_change",
+        *_PIOTROSKI_TESTS,
+    ],
     "net_net": ["net_current_assets", "price_to_ncav"],
     "owner_earnings": [
         "cfo",
@@ -340,7 +373,14 @@ def _reason(screen: str, row: sqlite3.Row, ranked: int) -> str:
             f"{row['earnings_yield']:.1%}, return on capital {row['return_on_capital']:.0%}"
         )
     if screen == "piotroski":
-        return f"{label} {row['score']}/9, rank {row['rank']} of {ranked}"
+        reason = f"{label} {row['score']}/9, rank {row['rank']} of {ranked}"
+        change = row["unusual_change"]
+        if change:
+            # A reader should not have to find this in the metrics: it is the first
+            # question the analysis pass asks of a Piotroski flag.
+            direction = "added" if change > 0 else "took"
+            reason += f"; tagged unusual items {direction} ${abs(change) / 1e6:,.1f}M year on year"
+        return reason
     if screen == "net_net":
         return f"{label}: market cap {row['price_to_ncav']:.2f}x net current assets"
     if screen == "owner_earnings":
@@ -433,6 +473,7 @@ _SCREEN_REQUIRES: dict[str, list[tuple[str, str]]] = {
     # profit is the usual culprit and was missing from this list when it was written,
     # which made the report understate the very gap it exists to surface.
     "piotroski": [
+        ("ebit", "no operating income"),
         ("cfo", "no operating cash flow"),
         ("net_income", "no net income"),
         ("assets", "no total assets"),
