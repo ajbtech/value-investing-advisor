@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 from dossier import __version__
 from dossier.analysis import (
@@ -472,7 +473,7 @@ def _ingest_one(queue: JobQueue, conn, edgar: EdgarClient, cik: int, force: bool
     )
     result = _result(outcome, cik=cik)
     if outcome.status == "done":
-        ingested = outcome.value
+        ingested = outcome.produced()
         result.update(
             status="ingested",
             filings=ingested.filings,
@@ -509,7 +510,7 @@ def _ingest_facts_one(queue: JobQueue, conn, zf: zipfile.ZipFile, version: str, 
     )
     result = _result(outcome, cik=cik)
     if outcome.status == "done":
-        found, ingested = outcome.value
+        found, ingested = outcome.produced()
         # A filer with no entry is one with no XBRL: an answer, like the API's 404.
         result.update(
             status="ingested" if found else "no_facts",
@@ -621,7 +622,7 @@ def _extract_one(queue: JobQueue, conn, edgar: EdgarClient, filing, force: bool)
     )
     result = _result(outcome, accession=accession)
     if outcome.status == "done":
-        extracted = outcome.value
+        extracted = outcome.produced()
         result.update(
             status="extracted",
             sections=extracted.sections,
@@ -718,7 +719,7 @@ def _prices_one(
     outcome = queue.run(PRICES_JOB, inputs, work)
     result.update(status=outcome.status, error=outcome.error)
     if outcome.status == "done":
-        fetched = outcome.value
+        fetched = outcome.produced()
         if "no_data" in fetched:
             result.update(status="no_data", error=fetched["no_data"])
         else:
@@ -1142,7 +1143,7 @@ def _analyze(args, config: Config) -> int:
 def _status(args, config: Config) -> int:
     with open_store(config.store_path) as conn:
         queue = JobQueue(conn, output_dir=config.output_dir)
-        payload = {
+        payload: dict[str, Any] = {
             "command": "status",
             "store": str(config.store_path),
             **row_counts(conn),

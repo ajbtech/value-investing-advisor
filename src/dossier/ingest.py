@@ -241,12 +241,14 @@ def parse_company_facts(
             f"companyfacts for CIK {cik} describes a different filer ({int(stated)}). "
             "Refusing to attribute one company's figures to another."
         )
-    if stated is None and cik is None:
-        raise ValueError(
-            "companyfacts carries no cik and none was supplied, so these facts cannot "
-            "be attributed to a filer."
-        )
-    cik = int(cik if cik is not None else stated)
+    if cik is None:
+        if stated is None:
+            raise ValueError(
+                "companyfacts carries no cik and none was supplied, so these facts cannot "
+                "be attributed to a filer."
+            )
+        cik = stated
+    cik = int(cik)
     facts: list[FactRecord] = []
     for taxonomy in doc.get("facts", {}).values():
         for tag, body in taxonomy.items():

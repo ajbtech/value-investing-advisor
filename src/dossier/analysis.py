@@ -112,6 +112,14 @@ def _section(conn, accession_no: str, item: str) -> dict | None:
     return dict(row) if row else None
 
 
+def _listed_section(conn, accession_no: str, item: str) -> dict:
+    """A section a query has just listed, so one that must exist."""
+    section = _section(conn, accession_no, item)
+    if section is None:
+        raise LookupError(f"Item {item} of {accession_no} vanished while being read")
+    return section
+
+
 def _screen_reason(conn, cik: int) -> dict | None:
     """The most recent screen run that flagged this company, if any.
 
@@ -163,8 +171,8 @@ def prepare_pass_a(
             "against anything. Run `dossier extract` first."
         )
 
-    current = _section(conn, rows[0]["accession_no"], item)
-    prior = _section(conn, rows[1]["accession_no"], item)
+    current = _listed_section(conn, rows[0]["accession_no"], item)
+    prior = _listed_section(conn, rows[1]["accession_no"], item)
 
     for label, section in (("current", current), ("prior", prior)):
         confidence = section["extraction_confidence"]
@@ -244,8 +252,8 @@ def prepare_pass_b(conn, cik: int, item: str = "8") -> dict:
             "footnotes are what this pass reads."
         )
 
-    current = _section(conn, rows[0]["accession_no"], item)
-    prior = _section(conn, rows[1]["accession_no"], item) if len(rows) > 1 else None
+    current = _listed_section(conn, rows[0]["accession_no"], item)
+    prior = _listed_section(conn, rows[1]["accession_no"], item) if len(rows) > 1 else None
 
     index = split_notes(current["text"])
     return {

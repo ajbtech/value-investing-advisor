@@ -210,6 +210,7 @@ class AsOfView:
         TEMP tables belong to this connection alone and vanish when it closes.
         """
         placeholders = ", ".join("?" for _ in TERMINAL_STATUSES)
+        scoped: tuple[str, ...]
         if ciks is None:
             scope, scoped = "", ()
         else:

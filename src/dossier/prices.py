@@ -17,6 +17,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from enum import Enum
+from typing import Literal
 
 import httpx
 
@@ -35,12 +37,19 @@ MAX_REQUESTS_PER_SECOND = 2
 
 PRICES_JOB = "fetch_prices"
 
-#: `ticker_of` for a CIK the store has no filer row for, as distinct from a filer that
-#: has no ticker. The first needs `dossier ingest`; the second has nothing to price.
-NOT_INGESTED = object()
+
+class NotIngested(Enum):
+    """`ticker_of` for a CIK the store has no filer row for, as distinct from a filer
+    that has no ticker. The first needs `dossier ingest`; the second has nothing to price.
+    An enum rather than a bare object() so a type checker can narrow it away."""
+
+    NOT_INGESTED = "not_ingested"
 
 
-def ticker_of(conn: sqlite3.Connection, cik: int) -> str | None | object:
+NOT_INGESTED = NotIngested.NOT_INGESTED
+
+
+def ticker_of(conn: sqlite3.Connection, cik: int) -> str | None | Literal[NotIngested.NOT_INGESTED]:
     """The filer's listed ticker, None if it has none, or NOT_INGESTED."""
     row = conn.execute("SELECT ticker FROM filer WHERE cik = ?", (cik,)).fetchone()
     return NOT_INGESTED if row is None else row["ticker"]

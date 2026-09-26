@@ -51,6 +51,13 @@ def test_installs_exactly_what_the_lockfile_says(workflow):
     assert all("--locked" in run for run in syncs)
 
 
+def test_type_checks_the_package(workflow):
+    """Lint catches style and tests catch what they exercise. A type checker catches the
+    Optional nobody handled on the path no test takes."""
+    steps = workflow["jobs"]["test"]["steps"]
+    assert any("mypy" in str(s.get("run", "")) for s in steps)
+
+
 def test_dependencies_and_actions_get_update_prs():
     """Dependabot proposes updates as ordinary PRs, which then have to pass ci-green."""
     config = yaml.safe_load((WORKFLOW.parent.parent / "dependabot.yml").read_text("utf-8"))
