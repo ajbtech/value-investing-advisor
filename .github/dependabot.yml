@@ -1,0 +1,14 @@
+# Update PRs for Python dependencies (uv.lock) and the Actions CI uses. Each arrives as an
+# ordinary pull request and has to pass ci-green like any other change.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

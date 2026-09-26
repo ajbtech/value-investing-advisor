@@ -39,4 +39,5 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+# PTH enforces CLAUDE.md's "pathlib everywhere", which was a convention with no check.
+select = ["E", "F", "I", "UP", "B", "PTH"]

@@ -799,14 +799,26 @@ The audit's other items — dead CIKs, bulk ingest, a wider extractor sample, th
 financial track — are above in "The plan, checked against what exists", with why each
 one is not urgent yet and what makes it urgent.
 
-## Outstanding, and only you can do it
+## Branch protection — applied 2026-09-25
 
-**Branch protection on `main` has not been applied yet.** `CLAUDE.md` states the rule
-and `ci-green` exists for it to require, but the GitHub setting itself needs repository
-admin, which no agent session has. Until it is applied, the branch discipline rests on
-instructions rather than on a control. The exact settings are in the session notes; the
-short version is: require a pull request, require the `ci-green` check, forbid force
-pushes and deletions on `main`.
+Two repository rulesets existed from 2026-09-21 but targeted `refs/heads/Standard`, a
+branch that does not exist, so **no rule applied to `main`** and a red PR could merge.
+Both now target the default branch: Standard-1 forbids deletion and force pushes;
+Standard-2 requires a pull request and the `ci-green` status check. `gh api
+repos/ajbtech/value-investing-advisor/rules/branches/main` lists all four.
+
+**Still a choice for the owner:** Standard-2 lets the Repository admin role bypass
+"always". A local session driving `gh` as the owner is an admin, so the rule does not
+stop *it* from pushing to `main`; only the instruction in `CLAUDE.md` does. Removing the
+bypass would make it a control for every session, at the cost of the owner going through
+a PR too.
+
+CI now lints with ruff's `PTH` rules (enforcing "pathlib everywhere"), and Dependabot
+proposes weekly updates for `uv` and GitHub Actions. **Pending on branch
+`claude/ci-workflow`, not yet pushed:** a read-only workflow token and `uv sync
+--locked`. Pushing any change under `.github/workflows/` needs the `gh` token's
+`workflow` scope, which this machine's login does not have (`gh auth refresh -h
+github.com -s workflow`). A type checker is the remaining gap worth closing.
 
 ## Known environment constraints
 

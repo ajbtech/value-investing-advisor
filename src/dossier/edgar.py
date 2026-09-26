@@ -197,7 +197,8 @@ class EdgarClient:
                         handle.write(chunk)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(tmp, dest)
+            # The same fault-injection seam as the job table's atomic write.
+            os.replace(tmp, dest)  # noqa: PTH105
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
