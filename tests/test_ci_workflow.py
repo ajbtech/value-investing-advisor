@@ -36,6 +36,21 @@ def test_tests_both_operating_systems(workflow):
     assert set(matrix["os"]) == {"ubuntu-latest", "windows-latest"}
 
 
+def test_the_token_is_read_only(workflow):
+    """The repository is public and CI only reads code. A workflow token that can
+    write is one compromised action away from writing to the repository."""
+    assert workflow["permissions"] == {"contents": "read"}
+
+
+def test_installs_exactly_what_the_lockfile_says(workflow):
+    """Without --locked, a stale uv.lock is silently re-resolved and CI tests versions
+    nobody chose. With it, a stale lock fails the build and says so."""
+    steps = workflow["jobs"]["test"]["steps"]
+    syncs = [s["run"] for s in steps if "uv sync" in str(s.get("run", ""))]
+    assert syncs
+    assert all("--locked" in run for run in syncs)
+
+
 def test_dependencies_and_actions_get_update_prs():
     """Dependabot proposes updates as ordinary PRs, which then have to pass ci-green."""
     config = yaml.safe_load((WORKFLOW.parent.parent / "dependabot.yml").read_text("utf-8"))
