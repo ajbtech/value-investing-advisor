@@ -20,7 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
-from dossier.edgar import RateLimiter
+from dossier.ratelimit import RateLimiter
 
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 SOURCE = "yahoo"
