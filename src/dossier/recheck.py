@@ -28,7 +28,9 @@ from dossier.figures import annual_rows, maintenance_capex, prepare_figures
 from dossier.journal import append_entry
 from dossier.thesis import stored_thesis
 
-RECHECK_VERSION = "1"
+#: 2: owner earnings are after stock compensation, as the valuation's have been since
+#: valuation version 2, so a report and the thesis it checks measure the same thing.
+RECHECK_VERSION = "2"
 
 #: The metrics that can be computed from XBRL facts in the store, with the aliases a
 #: thesis is likely to write them under. Anything outside this vocabulary is not a
@@ -125,7 +127,12 @@ def _metric_series(rows: list[dict]) -> list[dict]:
                 row["gross_profit"] / revenue if row.get("gross_profit") is not None else None
             )
             if row.get("cfo") is not None and capex is not None:
-                values["owner_earnings_margin"] = (row["cfo"] - capex["used"]) / revenue
+                # The valuation's definition, stock compensation included, because a
+                # thesis sets its threshold against the valuation's number.
+                stock_compensation = row.get("stock_compensation") or 0
+                values["owner_earnings_margin"] = (
+                    row["cfo"] - capex["used"] - stock_compensation
+                ) / revenue
             older = ordered[n + 1] if n + 1 < len(ordered) else None
             if older and older.get("revenue"):
                 values["revenue_growth"] = revenue / older["revenue"] - 1
