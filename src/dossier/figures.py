@@ -88,15 +88,19 @@ ANNUAL_TAGS = [
     ("WeightedAverageNumberOfDilutedSharesOutstanding", "shares"),
     # Unusual items, reported beside a Piotroski flag rather than adjusted out of it.
     ("AssetImpairmentCharges", "USD"),
+    ("GoodwillAndIntangibleAssetImpairment", "USD"),
     ("GoodwillImpairmentLoss", "USD"),
     ("ImpairmentOfIntangibleAssetsExcludingGoodwill", "USD"),
     ("ImpairmentOfIntangibleAssetsIndefinitelivedExcludingGoodwill", "USD"),
     ("ImpairmentOfLongLivedAssetsHeldForUse", "USD"),
+    ("ImpairmentOfLongLivedAssetsToBeDisposedOf", "USD"),
+    ("OperatingLeaseImpairmentLoss", "USD"),
     ("RestructuringCharges", "USD"),
     ("RestructuringCosts", "USD"),
     ("GainLossOnDispositionOfAssets1", "USD"),
     ("GainLossOnDispositionOfAssets", "USD"),
     ("GainLossOnSaleOfPropertyPlantEquipment", "USD"),
+    ("GainLossOnSaleOfProperties", "USD"),
     ("GainLossOnSaleOfBusiness", "USD"),
     ("DisposalGroupNotDiscontinuedOperationGainLossOnDisposal", "USD"),
     ("GainsLossesOnExtinguishmentOfDebt", "USD"),
@@ -171,33 +175,47 @@ _CAPEX_WITH_SOFTWARE = (
 )
 
 
-def _sum_or_null(*columns: str) -> str:
-    """The sum of whichever columns are reported, or NULL when none is."""
-    present = " AND ".join(f'"{c}" IS NULL' for c in columns)
-    total = " + ".join(f'COALESCE("{c}", 0)' for c in columns)
-    return f"CASE WHEN {present} THEN NULL ELSE {total} END"
+def _sum_or_null(*expressions: str) -> str:
+    """The sum of whichever expressions are reported, or NULL when none is."""
+    absent = " AND ".join(f"({e}) IS NULL" for e in expressions)
+    total = " + ".join(f"COALESCE({e}, 0)" for e in expressions)
+    return f"CASE WHEN {absent} THEN NULL ELSE {total} END"
+
+
+# Impairment elements nest: `AssetImpairmentCharges` can be the total of everything
+# below it, `GoodwillAndIntangibleAssetImpairment` the total of goodwill and intangibles.
+# At each level the aggregate wins over its parts, so no dollar counts twice.
+_INTANGIBLE_IMPAIRMENT = (
+    'COALESCE("ImpairmentOfIntangibleAssetsExcludingGoodwill", '
+    '"ImpairmentOfIntangibleAssetsIndefinitelivedExcludingGoodwill")'
+)
+_GOODWILL_AND_INTANGIBLE_IMPAIRMENT = (
+    'COALESCE("GoodwillAndIntangibleAssetImpairment", '
+    + _sum_or_null('"GoodwillImpairmentLoss"', _INTANGIBLE_IMPAIRMENT)
+    + ")"
+)
+_IMPAIRMENT = (
+    'COALESCE("AssetImpairmentCharges", '
+    + _sum_or_null(
+        _GOODWILL_AND_INTANGIBLE_IMPAIRMENT,
+        '"ImpairmentOfLongLivedAssetsHeldForUse"',
+        '"ImpairmentOfLongLivedAssetsToBeDisposedOf"',
+        '"OperatingLeaseImpairmentLoss"',
+    )
+    + ")"
+)
 
 
 #: Items the filer itself tags as unusual, each an expression and its sign on income.
 #: Charges are reported positive and reduce income; `GainLoss` elements are positive for
 #: a gain. Within a kind, the first reported element wins, so an aggregate and its parts
-#: never count the same dollars twice — `AssetImpairmentCharges` is often the total of the
-#: goodwill and long-lived impairments reported beside it.
+#: never count the same dollars twice.
 _UNUSUAL_ITEMS = [
-    (
-        'COALESCE("AssetImpairmentCharges", '
-        + _sum_or_null(
-            "GoodwillImpairmentLoss",
-            "ImpairmentOfLongLivedAssetsHeldForUse",
-            "ImpairmentOfIntangibleAssetsExcludingGoodwill",
-        )
-        + ', "ImpairmentOfIntangibleAssetsIndefinitelivedExcludingGoodwill")',
-        -1,
-    ),
+    (_IMPAIRMENT, -1),
     ('COALESCE("RestructuringCharges", "RestructuringCosts")', -1),
     (
         'COALESCE("GainLossOnDispositionOfAssets1", "GainLossOnDispositionOfAssets", '
-        '"GainLossOnSaleOfPropertyPlantEquipment")',
+        '"GainLossOnSaleOfPropertyPlantEquipment", "GainLossOnSaleOfProperties")',
         1,
     ),
     (

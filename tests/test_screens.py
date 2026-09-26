@@ -731,6 +731,30 @@ class TestUnusualItemsTravelWithAPiotroskiFlag:
             ({"GoodwillImpairmentLoss": 7.0, "ImpairmentOfLongLivedAssetsHeldForUse": 3.0}, -10.0),
             # The aggregate wins over its parts, or the same charge counts twice.
             ({"AssetImpairmentCharges": 10.0, "GoodwillImpairmentLoss": 7.0}, -10.0),
+            # Best Buy tagged its $171M goodwill and intangible charge only under this
+            # aggregate. Missing it made the year's unusual items look $150M smaller.
+            (
+                {
+                    "GoodwillAndIntangibleAssetImpairment": 171.0,
+                    "GoodwillImpairmentLoss": 150.0,
+                    "ImpairmentOfLongLivedAssetsHeldForUse": 21.0,
+                },
+                -192.0,
+            ),
+            ({"ImpairmentOfIntangibleAssetsIndefinitelivedExcludingGoodwill": 4.0}, -4.0),
+            # Genpact: assets held for sale and leases, beside long-lived assets in use.
+            (
+                {
+                    "ImpairmentOfLongLivedAssetsToBeDisposedOf": 2.0,
+                    "OperatingLeaseImpairmentLoss": 7.0,
+                    "ImpairmentOfLongLivedAssetsHeldForUse": 1.0,
+                },
+                -10.0,
+            ),
+            # Sally Beauty reports its headquarters gain both inside the broad disposal
+            # element and alone. The broad one wins; the narrow one is only a fallback.
+            ({"GainLossOnDispositionOfAssets1": 27.0, "GainLossOnSaleOfProperties": 26.0}, 27.0),
+            ({"GainLossOnSaleOfProperties": 26.0}, 26.0),
             ({"RestructuringCharges": 4.0}, -4.0),
             ({"GainLossRelatedToLitigationSettlement": 6.0}, 6.0),
             ({"GainsLossesOnExtinguishmentOfDebt": -2.0}, -2.0),
