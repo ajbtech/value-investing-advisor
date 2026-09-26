@@ -711,9 +711,9 @@ we fully impaired the goodwill and intangible asset related to our businesses in
 United Kingdom" (0000057131-25-000029). In the fiscal 2026 filing the UK is gone from
 Item 1A entirely, and the manufacturing list reads "the United States and Mexico".
 
-**Candidates analysed so far: 4 of 30**, two of them (La-Z-Boy and Kodak) over both Item
-1A and Item 7. Running totals across all Pass A runs, including Apple: **52 findings, 0
-dropped, 0% fabrication**, over seven passes.
+**Candidates analysed so far: 29 of the 30 in the 2026-09-24 screen** — see "Pass A over
+the whole candidate list" below. Nano Dimension, the thirtieth, has filed only one 10-K,
+so there is nothing to diff yet.
 
 Reading both Item 1A sections end to end costs tens of thousands of tokens per company.
 Diffing is far cheaper and has found every result so far: compare the risk-factor
@@ -798,6 +798,52 @@ Next, in rough order of value:
 The audit's other items — dead CIKs, bulk ingest, a wider extractor sample, the
 financial track — are above in "The plan, checked against what exists", with why each
 one is not urgent yet and what makes it urgent.
+
+## Pass A over the whole candidate list — run 2026-09-25
+
+The 24 candidates from the 2026-09-24 screen with no analysis were extracted (latest two
+10-Ks each, every Item 1A and 7 at confidence 1.00) and run through Pass A over both
+items. **153 findings, 0 dropped, 0% fabrication** (`pass_a_v3` 64, `pass_a_mdna_v1` 89;
+29 high, 83 medium, 41 low). Three Item 1A runs (Cavco, Sally Beauty, Paylocity) were
+loaded with no findings and a commentary saying why: nothing changed that mattered.
+
+**The screens' most common failure is a one-off inside the improvement Piotroski
+rewards.** Of 18 Piotroski-flagged filers in the batch, 8 had an earnings improvement the
+filing itself attributes mainly to something that does not repeat:
+
+| Filer | What the filing says drove the year |
+| --- | --- |
+| Ennis | a $5.3M legal settlement, larger than the $2.4M rise in net earnings |
+| Masco | lapping an $88M Kichler sale loss; operating profit fell 8% |
+| Cavco | financial-services margin 28.9% → 58.0% on favourable weather |
+| Best Buy | Best Buy Health impairments falling from $475M to $171M |
+| Incyte | a $242.2M Novartis royalty-settlement gain against last year's $710.9M Escient charges |
+| Sally Beauty | a $26.6M headquarters sale gain inside SG&A |
+| Leidos | lapping UK write-downs; Health & Civil grew on estimate write-ups while volumes fell |
+| CarGurus | CarOffer wound down and restated as discontinued operations |
+
+**The second pattern is measurement changing in the year the number would have looked
+worse.** Best Buy's comparable sales now name advertising and marketplace revenue in the
+year comps "returned to growth" at 0.5%; Herbalife stopped disclosing Volume Points after
+two years of decline; Leidos widened backlog to unissued IDIQ task orders while bookings
+fell from $23.2B to $17.5B; Criteo's Adjusted EBITDA became an open category; Paylocity
+extended an amortisation period and quantified the effect as +120–140bp of next year's
+Adjusted EBITDA margin; Consensus restated its account base; Genpact began capitalising
+interest into software.
+
+Other things the filings say plainly, each with its quote in the store: Incyte expects
+JAKAFI sales to decline from 2028 and faces six ANDA filers; Collegium's Nucynta IR went
+generic the day before its 10-K; Criteo's largest customer (5% of revenue) is cutting
+back; Bath & Body Works says 2025 "did not meet our expectations"; Comcast's EPS rise is
+the $9.4B Hulu gain while operating income fell 11.3%; Cirrus Logic discloses a $168.3M
+IRS transfer-pricing assessment plus $63.7M of penalties; Leidos' defense contracts are
+expected to restrict buybacks and dividends during "underperformance".
+
+**How it was run.** Masking digits and diffing sentences (`difflib` over sentence
+lists) got each filing pair down to the language that moved, at 10–45KB of diff per
+item; the helper scripts live outside the repo. Hard-wrapped filings (Deckers) need all
+whitespace flattened before splitting, or every line reads as changed. For filings whose
+diff was capped, the stored commentary says which part was read.
 
 ## Branch protection — applied 2026-09-25
 
