@@ -231,6 +231,24 @@ class TestPageNumbers:
         text = normalise("<p>Liquidity and Capital Resources</p><p>41</p><p>Cash flows</p>")
         assert "Liquidity and Capital Resources\nCash flows" in text
 
+    def test_a_small_table_cell_is_not_a_page_number(self):
+        """Found in Deckers' asset-retirement table (0001628280-26-037664): cells render as
+        one number per line, and a three-digit cell looked exactly like a page number, so
+        the row read "Accretion expenses 1,122 Foreign currency translation gains" with
+        927 gone. A number standing beside other numbers is a cell."""
+        text = normalise(
+            "<table><tr><td><p>Accretion expenses</p></td><td><p>1,122</p></td>"
+            "<td><p>927</p></td></tr><tr><td><p>Foreign currency translation gains</p></td>"
+            "<td><p>12</p></td><td><p>45</p></td></tr><tr><td><p>Ending balance</p></td>"
+            "<td><p>$36,790</p></td><td><p>$28,118</p></td></tr></table>"
+        )
+        assert "1,122\n927\n" in text
+        assert "gains\n12\n45\n" in text
+
+    def test_a_cell_beside_a_dash_is_still_a_cell(self):
+        text = normalise("<p>Deductions</p><p>—</p><p>446</p><p>Ending balance</p>")
+        assert "—\n446\n" in text
+
     def test_a_page_number_between_paragraphs_is_dropped(self):
         text = normalise("<p>First paragraph ends here.</p><p>12</p><p>Second begins.</p>")
         assert "\n12\n" not in text
