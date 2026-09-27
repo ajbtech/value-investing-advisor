@@ -110,6 +110,12 @@ SCREEN_TAGS: frozenset[str] = frozenset(
         "IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity",
         "IncomeLossFromDiscontinuedOperationsNetOfTax",
         "ShareBasedCompensation",
+        "InterestIncomeExpenseNonoperatingNet",
+        "InterestIncomeExpenseNet",
+        "InvestmentIncomeInterest",
+        "InterestExpenseNonoperating",
+        "InterestAndDebtExpense",
+        "InterestExpenseDebt",
         "PaymentsOfDividends",
         "PaymentsForRepurchaseOfCommonStock",
         # Share counts

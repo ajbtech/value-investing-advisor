@@ -87,6 +87,16 @@ ANNUAL_TAGS = [
     ),
     ("WeightedAverageNumberOfSharesOutstandingBasic", "shares"),
     ("WeightedAverageNumberOfDilutedSharesOutstanding", "shares"),
+    ("ShortTermInvestments", "USD"),
+    # Interest, so owner earnings can be valued before it and the balance sheet settled
+    # at face value. A filer's own net figure first; otherwise income less expense.
+    ("InterestIncomeExpenseNonoperatingNet", "USD"),
+    ("InterestIncomeExpenseNet", "USD"),
+    ("InvestmentIncomeInterest", "USD"),
+    ("InterestExpenseNonoperating", "USD"),
+    ("InterestExpense", "USD"),
+    ("InterestAndDebtExpense", "USD"),
+    ("InterestExpenseDebt", "USD"),
     # Unusual items, reported beside a Piotroski flag rather than adjusted out of it.
     ("AssetImpairmentCharges", "USD"),
     ("GoodwillAndIntangibleAssetImpairment", "USD"),
@@ -242,6 +252,20 @@ _UNUSUAL_EFFECT = (
     + " END"
 )
 
+#: Interest income less interest expense, positive when the filer earns more than it
+#: pays. A filer's own net element wins; otherwise income less expense, and NULL only
+#: when neither side is reported, which is not the same as reporting none.
+_INTEREST_EXPENSE = (
+    'COALESCE("InterestExpenseNonoperating", "InterestExpense", "InterestAndDebtExpense", '
+    '"InterestExpenseDebt")'
+)
+_NET_INTEREST_INCOME = (
+    'COALESCE("InterestIncomeExpenseNonoperatingNet", "InterestIncomeExpenseNet", '
+    f'CASE WHEN "InvestmentIncomeInterest" IS NULL AND {_INTEREST_EXPENSE} IS NULL '
+    f'THEN NULL ELSE COALESCE("InvestmentIncomeInterest", 0) - COALESCE({_INTEREST_EXPENSE}, 0) '
+    "END)"
+)
+
 _EQUITY = (
     'COALESCE("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", '
     '"StockholdersEquity")'
@@ -270,6 +294,8 @@ SELECT cik, fy_end,
   COALESCE("Liabilities", "LiabilitiesAndStockholdersEquity" - {_EQUITY}) AS liabilities,
   {_EQUITY} AS equity,
   "CashAndCashEquivalentsAtCarryingValue" AS cash,
+  "ShortTermInvestments" AS short_term_investments,
+  {_NET_INTEREST_INCOME} AS net_interest_income,
   COALESCE("LongTermDebtNoncurrent", "LongTermDebt" - COALESCE("LongTermDebtCurrent", 0))
     AS long_term_debt,
   COALESCE("DebtCurrent", "LongTermDebtCurrent") AS current_debt,
@@ -491,6 +517,30 @@ def annual_rows(conn: sqlite3.Connection, cik: int) -> list[sqlite3.Row]:
 
 def universe_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM universe_screened ORDER BY cik").fetchall()
+
+
+#: The US federal statutory rate, applied to interest for every filer alike: the rate a
+#: company actually pays is one more number a model could move, and the adjustment is
+#: small enough that one rate does not change a conclusion.
+TAX_RATE_ON_INTEREST = 0.21
+
+
+def owner_earnings(row: dict, capex_used: float | None) -> float | None:
+    """Operating cash flow less maintenance capex and stock compensation, before interest.
+
+    Operating cash flow is after interest paid and received. The valuation settles cash
+    and debt at face value instead, so the interest is added back after tax — otherwise
+    a net borrower's debt would be counted twice and a net saver's cash half-counted.
+    Stock compensation is a cost paid in shares that operating cash flow adds back.
+    Unreported stock compensation or interest counts as none.
+    """
+    if row.get("cfo") is None or capex_used is None:
+        return None
+    earnings = float(row["cfo"]) - capex_used - float(row.get("stock_compensation") or 0)
+    net_interest_income = row.get("net_interest_income")
+    if net_interest_income is not None:
+        earnings -= float(net_interest_income) * (1 - TAX_RATE_ON_INTEREST)
+    return earnings
 
 
 #: Years of capex history behind the revenue-scaled maintenance estimate.

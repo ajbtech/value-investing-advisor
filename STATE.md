@@ -976,6 +976,32 @@ conditions hold, and the three that need reading are flagged as such.
   together. Correct for idempotency, easy to trip over: load a pass's findings as one
   file.
 
+### Valuation v3: before interest, with the balance sheet at face value — 2026-09-26
+
+The valuation discounted owner earnings after interest and called that the equity. It
+was not wrong to leave debt unsubtracted, since interest was already deducted, but it
+valued debt and cash only through their interest: at a 10% discount rate a 4.95% note
+counts at about half its principal, and cash earning 4% at about half its face. Deckers
+holds $1,907.2M of cash, so the understatement was large.
+
+Valuation v3 adds net interest back after a fixed 21% tax, discounts owner earnings
+before interest, and settles cash, short-term investments and debt at face value;
+implied growth is solved against enterprise value. The recheck (v3) uses the same
+`figures.owner_earnings`. Ingest had been filtering the interest elements out; the three
+were re-ingested, and **the rest of the store needs the bulk re-parse** before any other
+filer is valued on v3.
+
+| | Price | Bear / base / bull | Net debt | Price implies |
+| --- | --- | --- | --- | --- |
+| Deckers | $78.59 | $84 / $129 / $175 | -$1,907M | revenue -2.0% a year |
+| Genpact | $33.24 | $24 / $45 / $67 | $338M | revenue -1.0% a year |
+| Sprouts | $66.38 | $46 / $83 / $121 | -$257M | revenue +3.75% a year |
+
+Margins moved with the definition: Deckers down 0.9 points (after-tax interest income),
+Genpact up 0.8 (after-tax interest expense), Sprouts unchanged. Theses and bear passes
+are at version 3 with the figures corrected; the arguments are unchanged, and every
+bear point was kept.
+
 ## Branch protection — applied 2026-09-25
 
 Two repository rulesets existed from 2026-09-21 but targeted `refs/heads/Standard`, a
