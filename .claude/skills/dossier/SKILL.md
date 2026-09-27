@@ -265,6 +265,12 @@ figures with the filing behind each one, both maintenance capex estimates and th
 between them, every stored finding, and the constants you cannot change. You return two
 triples:
 
+Owner earnings are after stock compensation and **before interest**: net interest is
+added back after a fixed 21% tax, and cash, short-term investments and debt are settled
+in code at face value. The margin you propose is on that definition, so a margin quoted
+from history as operating cash flow less capex is not the same number; say which you
+mean. Implied growth is solved against enterprise value, not market cap.
+
 - **`revenue_growth`** and **`owner_earnings_margin`**, each as `bear`, `base`, `bull`
   with a one-sentence `justification`. `terminal_growth` is optional and capped anyway.
 - A justification that describes the estimator rather than the evidence — "a

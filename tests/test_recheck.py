@@ -12,6 +12,7 @@ import json
 
 import pytest
 
+from dossier.figures import TAX_RATE_ON_INTEREST
 from dossier.prompt_files import prompt_text
 from dossier.recheck import CHECKABLE_METRICS, recheck_all, recheck_thesis
 from dossier.store import open_store
@@ -216,6 +217,20 @@ class TestOwnerEarningsMeanWhatTheValuationMeans:
         with_thesis(store, [MARGIN_CONDITION, OPERATING_CONDITION])
         margin = recheck_thesis(store, cik=CIK, as_of="2026-09-22")["conditions"][0]
         assert margin["observed"][0]["value"] == pytest.approx(0.015, abs=1e-4)
+
+    def test_interest_is_added_back_as_the_valuation_does(self, store):
+        store.execute(
+            "INSERT INTO fact (cik, tag, unit, period_start, period_end, filed_date, "
+            "accession_no, value, form_type) VALUES (?, 'InterestExpenseNonoperating', "
+            "'USD', '2025-04-27', '2026-04-25', '2026-06-16', '0000057131-26-000019', "
+            "10_000_000, '10-K')",
+            (CIK,),
+        )
+        store.commit()
+        with_thesis(store, [MARGIN_CONDITION, OPERATING_CONDITION])
+        margin = recheck_thesis(store, cik=CIK, as_of="2026-09-22")["conditions"][0]
+        expected = (110_000_000 - 60_000_000 + 10_000_000 * (1 - TAX_RATE_ON_INTEREST)) / 2e9
+        assert margin["observed"][0]["value"] == pytest.approx(expected, abs=1e-5)
 
     def test_unreported_stock_compensation_leaves_the_margin_as_it_was(self, store):
         with_thesis(store, [MARGIN_CONDITION, OPERATING_CONDITION])

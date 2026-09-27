@@ -24,13 +24,14 @@ import sqlite3
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from dossier.figures import annual_rows, maintenance_capex, prepare_figures
+from dossier.figures import annual_rows, maintenance_capex, owner_earnings, prepare_figures
 from dossier.journal import append_entry
 from dossier.thesis import stored_thesis
 
 #: 2: owner earnings are after stock compensation, as the valuation's have been since
 #: valuation version 2, so a report and the thesis it checks measure the same thing.
-RECHECK_VERSION = "2"
+#: 3: and before interest, as since valuation version 3.
+RECHECK_VERSION = "3"
 
 #: The metrics that can be computed from XBRL facts in the store, with the aliases a
 #: thesis is likely to write them under. Anything outside this vocabulary is not a
@@ -126,13 +127,11 @@ def _metric_series(rows: list[dict]) -> list[dict]:
             values["gross_margin"] = (
                 row["gross_profit"] / revenue if row.get("gross_profit") is not None else None
             )
-            if row.get("cfo") is not None and capex is not None:
-                # The valuation's definition, stock compensation included, because a
-                # thesis sets its threshold against the valuation's number.
-                stock_compensation = row.get("stock_compensation") or 0
-                values["owner_earnings_margin"] = (
-                    row["cfo"] - capex["used"] - stock_compensation
-                ) / revenue
+            # The valuation's definition, because a thesis sets its threshold against
+            # the valuation's number.
+            earnings = owner_earnings(row, capex["used"] if capex else None)
+            if earnings is not None:
+                values["owner_earnings_margin"] = earnings / revenue
             older = ordered[n + 1] if n + 1 < len(ordered) else None
             if older and older.get("revenue"):
                 values["revenue_growth"] = revenue / older["revenue"] - 1

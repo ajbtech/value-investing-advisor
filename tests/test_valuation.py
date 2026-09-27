@@ -221,3 +221,30 @@ class TestTheValuation:
         result = value(inputs(price=None), assumptions())
         assert result["base"]["per_share"] > 0
         assert result["implied"]["growth"] is None
+
+
+class TestTheBalanceSheet:
+    """Owner earnings are valued before interest, so the balance sheet is settled
+    separately: cash is added at its face value and debt subtracted at its principal.
+    Valued through its interest alone, cash earning 4% and debt costing 5% both count at
+    about half their face at a 10% discount rate."""
+
+    def test_cash_is_added_and_debt_subtracted(self):
+        result = value(inputs(cash=200.0, debt=500.0), assumptions())
+        operations = scenario_value(revenue=1000.0, growth=0.02, margin=0.08)
+        assert result["base"]["equity_value"] == pytest.approx(operations + 200.0 - 500.0)
+        assert result["base"]["per_share"] == pytest.approx((operations - 300.0) / 40.0)
+
+    def test_an_unreported_balance_counts_as_nothing(self):
+        result = value(inputs(cash=None, debt=None), assumptions())
+        operations = scenario_value(revenue=1000.0, growth=0.02, margin=0.08)
+        assert result["base"]["equity_value"] == pytest.approx(operations)
+
+    def test_the_price_is_read_as_an_enterprise_value(self):
+        """What the market pays for the operations is the market cap plus the debt it
+        takes on, less the cash it gets. Implied growth is solved against that."""
+        operations = scenario_value(revenue=1000.0, growth=0.03, margin=0.08)
+        price = (operations - 500.0 + 200.0) / 40.0
+        result = value(inputs(price=price, cash=200.0, debt=500.0), assumptions())
+        assert result["implied"]["growth"] == pytest.approx(0.03, abs=1e-3)
+        assert result["implied"]["enterprise_value"] == pytest.approx(operations)

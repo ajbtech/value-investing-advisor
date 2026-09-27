@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from dossier.figures import TAX_RATE_ON_INTEREST
 from dossier.store import open_store
 from dossier.valuation import (
     VALUATION_VERSION,
@@ -89,6 +90,17 @@ def store(tmp_path):
         yield conn
 
 
+def add_fact(conn, tag: str, value_: float, instant: bool = False) -> None:
+    """A figure in the latest fiscal year's 10-K: a duration, or a balance at year end."""
+    conn.execute(
+        "INSERT INTO fact (cik, tag, unit, period_start, period_end, filed_date, "
+        "accession_no, value, form_type) VALUES (?, ?, 'USD', ?, ?, '2026-06-16', "
+        "'0000057131-26-000019', ?, '10-K')",
+        (CIK, tag, "" if instant else "2025-04-27", FY, value_),
+    )
+    conn.commit()
+
+
 def assumptions_payload(**overrides) -> dict:
     payload = {
         "valuation": {
@@ -147,6 +159,40 @@ class TestPrepare:
         assert inputs["owner_earnings"] == pytest.approx(
             204_106_000.0 - prepared["maintenance_capex"]["used"]
         )
+
+    def test_owner_earnings_are_before_interest(self, store):
+        """Operating cash flow is after interest. Valuing it and then settling debt and
+        cash at face value would count interest twice, so it is added back after tax."""
+        add_fact(store, "InvestmentIncomeInterest", 10_000_000)
+        add_fact(store, "InterestExpenseNonoperating", 30_000_000)
+        prepared = prepare_valuation(store, cik=CIK, as_of="2026-09-22")
+        inputs = prepared["inputs"]
+        used = prepared["maintenance_capex"]["used"]
+        assert inputs["net_interest_income"] == -20_000_000.0
+        assert inputs["owner_earnings"] == pytest.approx(
+            204_106_000.0 - used + 20_000_000.0 * (1 - TAX_RATE_ON_INTEREST)
+        )
+
+    def test_a_reported_net_interest_figure_is_preferred(self, store):
+        add_fact(store, "InterestIncomeExpenseNonoperatingNet", -15_000_000)
+        add_fact(store, "InterestExpenseNonoperating", 30_000_000)
+        inputs = prepare_valuation(store, cik=CIK, as_of="2026-09-22")["inputs"]
+        assert inputs["net_interest_income"] == -15_000_000.0
+
+    def test_no_interest_reported_leaves_owner_earnings_as_they_were(self, store):
+        prepared = prepare_valuation(store, cik=CIK, as_of="2026-09-22")
+        assert prepared["inputs"]["net_interest_income"] is None
+        assert prepared["inputs"]["owner_earnings"] == pytest.approx(
+            204_106_000.0 - prepared["maintenance_capex"]["used"]
+        )
+
+    def test_cash_investments_and_debt_reach_the_inputs(self, store):
+        add_fact(store, "ShortTermInvestments", 40_000_000, instant=True)
+        add_fact(store, "LongTermDebtNoncurrent", 300_000_000, instant=True)
+        add_fact(store, "LongTermDebtCurrent", 50_000_000, instant=True)
+        inputs = prepare_valuation(store, cik=CIK, as_of="2026-09-22")["inputs"]
+        assert inputs["cash"] == 340_000_000.0
+        assert inputs["debt"] == 350_000_000.0
 
     def test_it_shows_both_maintenance_capex_estimates(self, store):
         """The one genuinely hard input. Hiding the spread inside a single number is

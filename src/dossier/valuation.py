@@ -8,9 +8,11 @@ because an input that can move them is an input that can talk a valuation into w
 answer was wanted.
 
 Owner earnings is the base measure, in the Buffett formulation: cash from operations
-less the capital expenditure needed to stand still. Because operating cash flow is
-already after interest and tax, discounting owner earnings gives the value of the
-equity directly — net debt is not subtracted again.
+less the capital expenditure needed to stand still, and less stock compensation. It is
+taken before interest, and the balance sheet is settled separately: cash and short-term
+investments are added at face value and debt subtracted at its principal. Valued through
+interest alone, as operating cash flow would, cash earning 4% and debt costing 5% both
+count at about half their face at a 10% discount rate.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
-from dossier.figures import annual_rows, maintenance_capex, prepare_figures
+from dossier.figures import annual_rows, maintenance_capex, owner_earnings, prepare_figures
 from dossier.prompt_files import prompt_text
 
 #: One number, set once, applied to every filer. Letting it vary per company is how a
@@ -39,10 +41,11 @@ MARGIN_OF_SAFETY = 0.30
 PROJECTION_YEARS = 10
 
 #: 2: owner earnings deduct stock-based compensation.
-VALUATION_VERSION = "2"
+#: 3: owner earnings are before interest; cash is added and debt subtracted at face value.
+VALUATION_VERSION = "3"
 
 #: Pinned like any other prompt, so a valuation can be traced to the words behind it.
-VALUATION_PROMPT = "valuation_v1"
+VALUATION_PROMPT = "valuation_v2"
 
 #: What a model may propose. Anything else — above all the discount rate — is fixed.
 PROPOSABLE = ("revenue_growth", "owner_earnings_margin", "terminal_growth")
@@ -125,10 +128,21 @@ class Inputs:
     #: Already deducted from `owner_earnings`. None when the filer tagged none, which is
     #: not the same as reporting zero.
     stock_compensation: float | None = None
+    #: Already added back to `owner_earnings`, after tax. None when not reported.
+    net_interest_income: float | None = None
+    #: Cash, equivalents and short-term investments; settled at face value.
+    cash: float | None = None
+    #: Debt principal, current and long-term; settled at face value.
+    debt: float | None = None
 
     @property
     def market_cap(self) -> float | None:
         return None if self.price is None else self.price * self.shares
+
+    @property
+    def net_debt(self) -> float:
+        """Debt less cash. Unreported balances count as none."""
+        return float(self.debt or 0) - float(self.cash or 0)
 
     @property
     def owner_earnings_margin(self) -> float | None:
@@ -144,6 +158,10 @@ class Inputs:
             "owner_earnings": self.owner_earnings,
             "owner_earnings_margin": self.owner_earnings_margin,
             "stock_compensation": self.stock_compensation,
+            "net_interest_income": self.net_interest_income,
+            "cash": self.cash,
+            "debt": self.debt,
+            "net_debt": self.net_debt,
             "shares": self.shares,
             "price": self.price,
             "market_cap": self.market_cap,
@@ -235,8 +253,10 @@ def value(inputs: Inputs, assumptions: list[Assumption]) -> dict:
         growth = by_name["revenue_growth"].scenario(case)
         margin = by_name["owner_earnings_margin"].scenario(case)
         terminal_growth = terminal.scenario(case) if terminal is not None else TERMINAL_GROWTH_CAP
-        equity = scenario_value(inputs.revenue, growth, margin, terminal_growth)
+        operations = scenario_value(inputs.revenue, growth, margin, terminal_growth)
+        equity = operations - inputs.net_debt
         cases[case] = {
+            "operations_value": operations,
             "equity_value": equity,
             "per_share": equity / inputs.shares if inputs.shares else None,
             "revenue_growth": growth,
@@ -246,14 +266,20 @@ def value(inputs: Inputs, assumptions: list[Assumption]) -> dict:
 
     bear_per_share = cases["bear"]["per_share"]
     market_cap = inputs.market_cap
+    # What the market pays for the operations: the equity, plus the debt that comes with
+    # it, less the cash.
+    enterprise_value = None if market_cap is None else market_cap + inputs.net_debt
     implied = {
         "price": inputs.price,
         "market_cap": market_cap,
+        "enterprise_value": enterprise_value,
         "margin_used": by_name["owner_earnings_margin"].base,
         "growth": (
             None
-            if market_cap is None
-            else implied_growth(market_cap, inputs.revenue, by_name["owner_earnings_margin"].base)
+            if enterprise_value is None
+            else implied_growth(
+                enterprise_value, inputs.revenue, by_name["owner_earnings_margin"].base
+            )
         ),
     }
 
@@ -321,14 +347,9 @@ def historical_inputs(conn: sqlite3.Connection, cik: int, as_of: date | str) -> 
 
     history = _history(conn, cik)
     capex = maintenance_capex(history)
-    # Operating cash flow adds stock compensation back as non-cash. It is paid in
-    # shares, not cash, but it is a cost all the same: deduct it, or the valuation
-    # flatters most the filers that pay the most in stock.
-    stock_compensation = row["stock_compensation"]
-    owner_earnings = None
-    if row["cfo"] is not None and capex is not None:
-        owner_earnings = float(row["cfo"]) - capex["used"] - float(stock_compensation or 0)
-    if owner_earnings is None:
+    latest = dict(row)
+    earnings = owner_earnings(latest, capex["used"] if capex else None)
+    if earnings is None:
         raise ValueError(
             f"CIK {cik} has no owner earnings as of {as_of}: operating cash flow or "
             "capital expenditure is missing. Assuming either one would value a company "
@@ -339,12 +360,25 @@ def historical_inputs(conn: sqlite3.Connection, cik: int, as_of: date | str) -> 
         cik=cik,
         as_of=str(as_of),
         revenue=float(row["revenue"]),
-        owner_earnings=owner_earnings,
+        owner_earnings=earnings,
         shares=float(row["shares"]),
         price=None if row["price"] is None else float(row["price"]),
         history=history,
-        stock_compensation=None if stock_compensation is None else float(stock_compensation),
+        stock_compensation=_or_none(latest["stock_compensation"]),
+        net_interest_income=_or_none(latest["net_interest_income"]),
+        cash=_sum_reported(latest["cash"], latest["short_term_investments"]),
+        debt=_sum_reported(latest["long_term_debt"], latest["current_debt"]),
     )
+
+
+def _or_none(value_: float | None) -> float | None:
+    return None if value_ is None else float(value_)
+
+
+def _sum_reported(*values: float | None) -> float | None:
+    """The sum of what was reported, or None if nothing was: no tag is not a zero."""
+    reported = [float(v) for v in values if v is not None]
+    return sum(reported) if reported else None
 
 
 def prepare_valuation(conn: sqlite3.Connection, cik: int, as_of: date | str) -> dict:
