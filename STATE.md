@@ -966,11 +966,11 @@ conditions hold, and the three that need reading are flagged as such.
 
 **Known gaps found on the way, not yet fixed:**
 
-- `normalise` drops any line that is only a one- to four-digit number, meant for page
-  numbers, and so removes small table cells: Deckers' asset-retirement roll-forward
-  reads "Accretion expenses 1,122 Foreign currency translation gains Ending balance".
-  Quotes stay honest, since they are checked against the same text, but a table read
-  from a stored section can be missing cells.
+- ~~`normalise` drops small table cells as page numbers.~~ **Fixed in extractor v5**: a
+  bare number beside other figures is kept as a cell. Deckers' asset-retirement row
+  now reads "Accretion expenses 1,122 927", and table year headers ("2026 2025") are no
+  longer lost. The three were re-extracted and all 123 stored quotes re-verified; one
+  (Deckers' CCA table, which had quoted around the missing header) was re-quoted.
 - Loading a pass's findings replaces that company's earlier findings for the pass. A
   one-finding correction therefore wiped the other five until all six were loaded
   together. Correct for idempotency, easy to trip over: load a pass's findings as one

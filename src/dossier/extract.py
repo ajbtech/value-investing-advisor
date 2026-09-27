@@ -28,7 +28,8 @@ from datetime import UTC, datetime
 #: 3: a page break before a capitalised line no longer joins the lines, which had been
 #: hiding any Item heading that opened a page after one that did not end in a stop.
 #: 4: an Item 8 that only points past Part IV is replaced by the notes filed there.
-EXTRACTOR_VERSION = "4"
+#: 5: a bare number beside other figures is a table cell, not a page number.
+EXTRACTOR_VERSION = "5"
 
 EXTRACT_JOB = "extract_sections"
 
@@ -86,6 +87,40 @@ _PAGE_BREAK_MID_SENTENCE = re.compile(
 )
 _PAGE_BREAK = re.compile(_FURNITURE_RUN, re.IGNORECASE)
 
+#: A table cell on a line of its own: a figure, possibly in dollars, brackets or percent,
+#: or a dash standing for zero.
+_NUMERIC_CELL = re.compile(r"^[ \t]*(?:\$?[ \t]?\(?-?\d[\d,.]*\)?%?|[—–-])[ \t]*$")
+_BARE_NUMBER = re.compile(r"^[ \t]*\d{1,4}[ \t]*$", re.MULTILINE)
+
+
+def _is_table_cells(text: str, match: re.Match) -> bool:
+    """Is this run of bare numbers a table's cells rather than a page break?
+
+    Tables render one cell per line, so a three-digit cell looks exactly like a page
+    number. A page number stands between prose; a cell stands beside other figures. Two
+    bare numbers in a row, or one beside a figure, are cells. A stray page number after
+    the last row of a table is kept as a result, the cheaper mistake: a dropped cell
+    silently misstates the table.
+    """
+    run = match.group(0)
+    if "table of contents" in run.lower():
+        return False
+    if len(_BARE_NUMBER.findall(run)) > 1:
+        return True
+    previous_start = text.rfind("\n", 0, match.start()) + 1
+    previous_line = text[previous_start : match.start()]
+    next_end = text.find("\n", match.end())
+    next_line = text[match.end() : next_end if next_end != -1 else len(text)]
+    return bool(_NUMERIC_CELL.match(previous_line) or _NUMERIC_CELL.match(next_line))
+
+
+def _unless_table_cells(replacement: str):
+    def replace(match: re.Match) -> str:
+        return match.group(0) if _is_table_cells(match.string, match) else replacement
+
+    return replace
+
+
 _PAGE_FOOTER = re.compile(
     r"^[^\n|]{1,80}\|\s*\d{4}\s+Form\s+10-K\s*\|\s*\d+[ \t]*\n(?:[ \t]*Table of Contents[ \t]*\n)?",
     re.IGNORECASE | re.MULTILINE,
@@ -131,8 +166,8 @@ def normalise(raw_html: str) -> str:
     # Contents" line on two adjacent lines, however many paragraph breaks separated
     # them in the source markup, so the pattern below can match reliably.
     text = _PAGE_FOOTER.sub("\n", text)
-    text = _PAGE_BREAK_MID_SENTENCE.sub(" ", text)
-    text = _PAGE_BREAK.sub("\n", text)
+    text = _PAGE_BREAK_MID_SENTENCE.sub(_unless_table_cells(" "), text)
+    text = _PAGE_BREAK.sub(_unless_table_cells("\n"), text)
     text = re.sub(r"^\d{1,4}\n|\n\d{1,4}$", "\n", text)
     return re.sub(r"\n{2,}", "\n", text).strip()
 
